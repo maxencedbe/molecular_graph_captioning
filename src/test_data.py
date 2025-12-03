@@ -1,4 +1,4 @@
-from data.data_process import load_data,ohe_node_features
+from data.data_process import load_data,ohe_node_features,ohe_edge_features
 
 
 if __name__ == "__main__":
@@ -7,4 +7,5 @@ if __name__ == "__main__":
     print("Data loaded successfully:")
     print(data[0])
     print(ohe_node_features(data[0]))
+    print(ohe_edge_features(data[0]))
     print(type(data[0]))

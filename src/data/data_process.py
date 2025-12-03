@@ -118,6 +118,24 @@ def ohe_node_features(graph):
     graph.x = final_x
     return graph
 
+def ohe_edge_features(graph):
+    n_edge = graph.edge_attr.size(0)
+    total_feat = sum([len(l) for l in e_map.values()])
+    final_attr = torch.zeros((n_edge, total_feat))
+    
+    offset = 0
+    for i, feat in enumerate(e_map.keys()):
+        l_feat = e_map[feat]
+        tensor_feat = torch.zeros((n_edge, len(l_feat)))
+        
+        indices = graph.edge_attr[:, i].long()  
+        tensor_feat[torch.arange(n_edge), indices] = 1.0
+        
+        final_attr[:, offset:offset + len(l_feat)] = tensor_feat
+        offset += len(l_feat)
+    
+    graph.edge_attr = final_attr
+    return graph
 
 # =========================================================
 # Dataset that loads preprocessed graphs and text embeddings
@@ -148,7 +166,7 @@ class PreprocessedGraphDataset(Dataset):
     def __getitem__(self, idx):
         graph = self.graphs[idx]
         if self.encode_feat : 
-            graph = ohe_node_features(graph)
+            graph = ohe_node_features(graph,x_map)
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]
