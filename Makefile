@@ -1,6 +1,16 @@
 PYTHON_VERSION := 3.11
 VENV  := .venv
 
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Windows_NT)
+    PYTHON_EXEC := $(VENV)/Scripts/python.exe
+    UV_PYTHON_EXEC := $(VENV)/Scripts/python
+else
+    PYTHON_EXEC := $(VENV)/bin/python
+    UV_PYTHON_EXEC := $(VENV)/bin/python
+endif
+
 .PHONY: env data_process
 
 env:
@@ -10,10 +20,10 @@ env:
 	}
 	@echo "Setting up eval environment..."
 	@uv venv $(VENV) --python $(PYTHON_VERSION) --no-project
-	@uv pip install -r requirements.txt --python $(VENV)/bin/python
+	@uv pip install -r requirements.txt --python $(UV_PYTHON_EXEC)
 	@echo "Evaluation environment ready."
 
 data_process:
 	@echo "Processing data..."
-	@$(VENV)/bin/python src/test_data.py
+	@$(PYTHON_EXEC) src/test_data.py
 	@echo "Data processing complete."
