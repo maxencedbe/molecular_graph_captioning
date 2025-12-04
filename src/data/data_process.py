@@ -1,8 +1,5 @@
-import pickle 
-from typing import Dict
 import pickle
 from typing import Dict, List, Any
-
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -166,7 +163,8 @@ class PreprocessedGraphDataset(Dataset):
     def __getitem__(self, idx):
         graph = self.graphs[idx]
         if self.encode_feat : 
-            graph = ohe_node_features(graph,x_map)
+            graph = ohe_node_features(graph)
+            graph = ohe_edge_features(graph)
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]
@@ -192,4 +190,3 @@ def collate_fn(batch):
         return batch_graph, text_embs
     else:
         return Batch.from_data_list(batch)
-
