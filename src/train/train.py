@@ -61,6 +61,7 @@ def main():
     from src.data.data_process import load_id2emb, PreprocessedGraphDataset, collate_fn
     from torch.utils.data import DataLoader
     from src.model.model import GEncoder
+    from src.model.ref_model import MolGNN
     import torch.optim as optim
 
     train_data_file = "data/train_graphs.pkl"
@@ -78,6 +79,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     model = GEncoder().to(device)
+    #model = MolGNN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     for epoch in range(epochs):
