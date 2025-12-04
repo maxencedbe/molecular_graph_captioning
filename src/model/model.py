@@ -5,8 +5,8 @@ from torch_geometric.nn import global_add_pool
 
 node_feat_dim = 177
 edge_feat_dim = 30
-hidden_dim = 128
-projection_dim = 256
+hidden_dim = 256
+projection_dim = 768
 
 class GEncoder(nn.Module):
     def __init__(self, num_layers=3, in_dim=node_feat_dim, hidden_dim=hidden_dim):
