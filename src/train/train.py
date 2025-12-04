@@ -1,12 +1,17 @@
 import torch
-
 from src.utils import contrastive_loss
+from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
+from torch.utils.data import DataLoader
+from src.model.model import GEncoder
+import torch.optim as optim
+
 
 epochs = 50
 batch_size = 32
 learning_rate = 1e-3
 weight_decay = 1e-5
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def train_epoch(model, dataloader, optimizer, device):
     model.train()
@@ -30,6 +35,7 @@ def train_epoch(model, dataloader, optimizer, device):
 
     return total_loss / len(dataloader.dataset)
 
+
 def validate_epoch(model, dataloader, device):
     model.eval()
     total_loss = 0
@@ -49,14 +55,8 @@ def validate_epoch(model, dataloader, device):
 
 
 def main():
-    from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
-    from torch.utils.data import DataLoader
-    from src.model.model import GEncoder
-    import torch.optim as optim
-
     train_data_file = "data/train_graphs.pkl"
     val_data_file = "data/validation_graphs.pkl"
-
 
     train_dataset = PreprocessedGraphDataset(train_data_file, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, encode_feat=True)
