@@ -32,3 +32,8 @@ test_model:
 	@echo "Testing model..."
 	@$(PYTHON_EXEC) src/test_model.py
 	@echo "Model testing complete."
+
+train:
+	@echo "Training model..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
+	@echo "Model training complete."
