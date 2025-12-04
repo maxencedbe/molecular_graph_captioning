@@ -1,12 +1,18 @@
 import torch
 import tqdm
 from src.utils import contrastive_loss
+from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
+from torch.utils.data import DataLoader
+from src.model.model import GEncoder
+import torch.optim as optim
+
 
 epochs = 50
 batch_size = 32
 learning_rate = 5e-6
 weight_decay = 1e-5
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def train_epoch(model, dataloader, optimizer, device):
     model.train()
@@ -31,6 +37,7 @@ def train_epoch(model, dataloader, optimizer, device):
         progress_bar.set_postfix(loss=f'{current_loss_value:.4f}')
 
     return total_loss / len(dataloader.dataset)
+
 
 def validate_epoch(model, dataloader, device):
     model.eval()

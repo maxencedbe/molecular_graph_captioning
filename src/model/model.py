@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn import global_add_pool
 
+
 node_feat_dim = 177
 edge_feat_dim = 30
 hidden_dim = 256
@@ -26,6 +27,7 @@ class GEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(projection_dim, projection_dim)
         )
+
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
@@ -56,13 +58,16 @@ class MessagePassing(MessagePassing):
             nn.ReLU(),
         )
 
+
     def forward(self, x, edge_index, edge_attr):
         return self.propagate(edge_index, x=x, edge_attr=edge_attr)
-    
+
+
     def message(self, x_j, edge_attr):
         message_input = torch.cat([x_j, edge_attr], dim=-1)
         return self.mlp_message(message_input)
-    
+
+
     def update(self, aggr_out, x):
         update_input = torch.cat([x, aggr_out], dim=-1)
         return self.mlp_update(update_input)

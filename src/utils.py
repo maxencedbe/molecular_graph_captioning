@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 
+
 def contrastive_loss(z_graph, z_text, temp=0.07):
     z_graph = F.normalize(z_graph, p=2, dim=1)
     z_text = F.normalize(z_text, p=2, dim=1)
