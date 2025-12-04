@@ -92,7 +92,18 @@ def load_descriptions_from_graphs(graph_path: str) -> Dict[str, str]:
     
     return id2desc
 
-
+def embdict_to_tensor(emb_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """
+    Convert a dictionary of embeddings to a stacked tensor.
+    Args:
+        emb_dict: Dictionary mapping ID (str) to embedding tensor
+        id_list: List of IDs (str) to retrieve embeddings for
+        
+    Returns:
+        Stacked tensor of embeddings corresponding to the IDs in id_list
+    """
+    emb_list = [emb_dict[id_] for id_ in emb_dict.keys()]
+    return torch.stack(emb_list, dim=0)
 # =========================================================
 # One hot encode the features
 # =========================================================
