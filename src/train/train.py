@@ -62,7 +62,8 @@ def validate_epoch(model, dataloader, caption_emb, train_data, device):
             z_graph = model(batch_graph)
 
             loss = contrastive_loss(z_graph, batch_text_emb)
-
+            
+            caption_emb = caption_emb.to(device)
             text_id = retrieve_captioning(z_graph, caption_emb)
             pred_caption = [train_data[i].description for i in text_id.cpu().numpy()]
 
@@ -90,8 +91,8 @@ def main():
     from src.model.ref_model import MolGNN
     import torch.optim as optim
 
-    train_data_file = "data/train_graphs.pkl"
-    val_data_file = "data/validation_graphs.pkl"
+    train_data_file = "src/data/train_graphs.pkl"
+    val_data_file = "src/data/validation_graphs.pkl"
     train_emb_csv = "src/data/train_embeddings.csv"
     val_emb_csv   = "src/data/validation_embeddings.csv"
 
