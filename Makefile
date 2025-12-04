@@ -3,9 +3,9 @@ VENV  := .venv
 
 UNAME_S := $(shell uname -s)
 
-ifeq ($(UNAME_S),Windows_NT)
+ifeq ($(findstring NT,$(UNAME_S)),NT)
     PYTHON_EXEC := $(VENV)/Scripts/python.exe
-    UV_PYTHON_EXEC := $(VENV)/Scripts/python
+    UV_PYTHON_EXEC := $(VENV)/Scripts/python.exe
 else
     PYTHON_EXEC := $(VENV)/bin/python
     UV_PYTHON_EXEC := $(VENV)/bin/python
