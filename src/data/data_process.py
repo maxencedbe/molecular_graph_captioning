@@ -111,7 +111,7 @@ def ohe_node_features(graph):
         
         final_x[:, offset:offset + len(l_feat)] = tensor_feat
         offset += len(l_feat)
-    
+    final_x = final_x.float()
     graph.x = final_x
     return graph
 
@@ -130,7 +130,7 @@ def ohe_edge_features(graph):
         
         final_attr[:, offset:offset + len(l_feat)] = tensor_feat
         offset += len(l_feat)
-    
+    final_attr = final_attr.float()
     graph.edge_attr = final_attr
     return graph
 

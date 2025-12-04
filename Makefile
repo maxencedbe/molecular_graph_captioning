@@ -27,3 +27,8 @@ data_process:
 	@echo "Processing data..."
 	@$(PYTHON_EXEC) src/test_data.py
 	@echo "Data processing complete."
+
+test_model:
+	@echo "Testing model..."
+	@$(PYTHON_EXEC) src/test_model.py
+	@echo "Model testing complete."

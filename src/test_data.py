@@ -1,4 +1,5 @@
-from data.data_process import load_data, ohe_node_features, ohe_edge_features
+from data.data_process import load_data,ohe_node_features,ohe_edge_features
+
 
 if __name__ == "__main__":
     data_file = "data/test_graphs.pkl"

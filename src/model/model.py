@@ -29,7 +29,6 @@ class GEncoder(nn.Module):
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
-
         for conv in self.layers:
             x = conv(x, edge_index, edge_attr)
 
