@@ -26,21 +26,33 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
     
-    for batch_idx, (batch_graph,batch_text) in enumerate(progress_bar):
+    for batch_idx, (batch_graph, batch_text) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
         batch_text = batch_text.to(device)
+        batch_size = batch_graph.num_graphs
+        
         optimizer.zero_grad()
 
-        batch_score = model(batch_graph,batch_text)
-        print(batch_score)
-        loss = torch.zeros(1, device=device)
+        # Scores positifs (paires correctes)
+        positive_scores = model(batch_graph, batch_text) 
+        
+        perm = torch.randperm(batch_size, device=device)
+        while (perm == torch.arange(batch_size, device=device)).any():
+            perm = torch.randperm(batch_size, device=device)
+        
+        batch_text_neg = {k: v[perm] for k, v in batch_text.items()}
+        negative_scores = model(batch_graph, batch_text_neg) 
+        
+        # Hinge loss: max(0, margin - (positive_score - negative_score))
+        margin = 0.5
+        loss = torch.clamp(margin - (positive_scores - negative_scores), min=0).mean()
 
         loss.backward()
         optimizer.step()
         
-        batch_loss = loss.item() * batch_graph.num_graphs
+        batch_loss = loss.item() * batch_size
         total_loss += batch_loss
-        num_samples_processed += batch_graph.num_graphs
+        num_samples_processed += batch_size
         
         running_loss = total_loss / num_samples_processed
         progress_bar.set_postfix(loss=f'{running_loss:.4f}')
@@ -53,42 +65,75 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
     avg_loss = total_loss / len(dataloader.dataset)
     return avg_loss
 
-
-def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluator, device):
+from transformers import BertTokenizer
+def validate_epoch(model, dataloader, val_data_list, evaluator, device):
     model.eval()
     total_loss = 0
     total_score = 0
+    num_samples_processed = 0
+    
+    # Pré-calculer tous les embeddings de texte de validation
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    all_text_inputs = [data.description for data in val_data_list]
+    text_encoded = tokenizer(all_text_inputs, padding=True, truncation=True, return_tensors='pt')
+    text_encoded = {k: v.to(device) for k, v in text_encoded.items()}
     
     progress_bar = tqdm.tqdm(dataloader, desc="Validation", leave=False)
     
     with torch.no_grad():
-        for batch_graph, batch_text_emb in progress_bar:
+        for batch_graph, batch_text in progress_bar:
             batch_graph = batch_graph.to(device)
-            batch_text_emb = batch_text_emb.to(device)
-
-            z_graph = model(batch_graph)
-
-            loss = contrastive_loss(z_graph, batch_text_emb)
-            total_loss += loss.item() * batch_graph.num_graphs
-
-            text_id = retrieve_captioning(z_graph, val_caption_tensor)
+            batch_text = {k: v.to(device) for k, v in batch_text.items()}
+            batch_size = batch_graph.num_graphs
             
-            pred_caption = [val_data_list[i].description for i in text_id.cpu().numpy()]
+            # Scores positifs
+            positive_scores = model(batch_graph, batch_text)
             
+            # Créer négatifs pour la loss
+            perm = torch.randperm(batch_size, device=device)
+            while (perm == torch.arange(batch_size, device=device)).any():
+                perm = torch.randperm(batch_size, device=device)
+            
+            batch_text_neg = {k: v[perm] for k, v in batch_text.items()}
+            negative_scores = model(batch_graph, batch_text_neg)
+            
+            margin = 1.0
+            loss = torch.clamp(margin - (positive_scores - negative_scores), min=0).mean()
+            total_loss += loss.item() * batch_size
+            
+            # Retrieval : comparer chaque molécule avec TOUS les textes de validation
+            pred_caption = []
+            for i in range(batch_size):
+                single_graph = batch_graph[i]
+                
+                # Calculer le score avec tous les textes de validation
+                scores = []
+                for j in range(len(val_data_list)):
+                    text_j = {k: v[j:j+1] for k, v in text_encoded.items()}
+                    score = model(single_graph, text_j)
+                    scores.append(score.item())
+                
+                # Trouver l'index du texte avec le meilleur score
+                predicted_idx = torch.tensor(scores).argmax().item()
+                pred_caption.append(val_data_list[predicted_idx].description)
+            
+            # True captions du batch
             individual_graphs = batch_graph.to_data_list()
             true_caption = [graph.description for graph in individual_graphs]
             
+            # Évaluer avec l'evaluator
             score = evaluator.evaluate_batch(pred_caption, true_caption)
+            total_score += score['composite_score'] * batch_size
             
-            total_score += score['composite_score'] * batch_graph.num_graphs
+            num_samples_processed += batch_size
             
             progress_bar.set_postfix(
-                v_loss=f'{total_loss / len(dataloader.dataset):.4f}', 
-                v_score=f'{total_score / len(dataloader.dataset):.4f}'
+                v_loss=f'{total_loss / num_samples_processed:.4f}',
+                v_score=f'{total_score / num_samples_processed:.4f}'
             )
 
-    avg_loss = total_loss / len(dataloader.dataset)
-    avg_score = total_score / len(dataloader.dataset)
+    avg_loss = total_loss / num_samples_processed
+    avg_score = total_score / num_samples_processed
     return avg_loss, avg_score
 
 
@@ -125,11 +170,8 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    #model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
-    #model = MolGNN().to(device)
     model = MoLCABackbone().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
     evaluator = MolecularCaptionEvaluator(device=device)
 
     wandb.watch(model, log="all", log_freq=100)

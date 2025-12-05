@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import AutoModel, AutoConfig
 from torch_geometric.nn.conv import MessagePassing
-
+from torch_geometric.utils import to_dense_batch
 # --- Hyperparamètres de Base ---
 # Note : Ces valeurs sont indicatives et doivent être ajustées
 class HParams:
@@ -94,14 +94,11 @@ class GEncoder(nn.Module):
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
-        print(data)
-        print(x.shape)
         x = self.input_proj(x)
         
-        for conv in zip(self.layers, self.norms, self.ffn):
+        for conv,_,_ in zip(self.layers, self.norms, self.ffn):
             x = conv(x, edge_index, edge_attr)
 
-        print(x.shape)
         z_graph = self.projection_head(x)
 
         return z_graph
@@ -160,9 +157,10 @@ class MoLCABackbone(nn.Module):
     def forward(self, mol_data, text_data):
 
         H_mol = self.gnn_encoder(mol_data)
-        H_text = self.text_encoder(text_data['input_ids'], text_data['attention_mask']).squeeze(0)
+        H_mol, _ = to_dense_batch(H_mol, mol_data.batch)
 
-        print(H_mol.shape, H_text.shape)
+        H_text = self.text_encoder(text_data['input_ids'], text_data['attention_mask']).squeeze(0)
+        
         H_prime_text, attn_weights = self.cross_attention(
             query=H_text,
             key=H_mol,
