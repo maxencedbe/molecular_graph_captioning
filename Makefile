@@ -11,7 +11,7 @@ else
     UV_PYTHON_EXEC := $(VENV)/bin/python
 endif
 
-.PHONY: env data_process
+.PHONY: env data_process test_model train infer
 
 env:
 	@command -v uv >/dev/null 2>&1 || { \
@@ -37,3 +37,8 @@ train:
 	@echo "Training model..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
 	@echo "Model training complete."
+
+infer:
+	@echo "Running inference..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
+	@echo "Inference complete."

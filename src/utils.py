@@ -19,7 +19,7 @@ def contrastive_loss(z_graph, z_text, temp=0.07):
     return total_loss
 
 
-def retrieve_captioning(batch_z_graph,batch_text_emb):
+def retrieve_captioning(batch_z_graph, batch_text_emb):
     batch_z_graph = F.normalize(batch_z_graph, p=2, dim=1)
     batch_text_emb = F.normalize(batch_text_emb, p=2, dim=1)
     similarities = batch_z_graph @ batch_text_emb.T
@@ -27,11 +27,9 @@ def retrieve_captioning(batch_z_graph,batch_text_emb):
     return text_id #(batch_size,)
 
 
-import torch
 import numpy as np
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from transformers import AutoTokenizer, AutoModel
-import torch.nn.functional as F
 
 
 class MolecularCaptionEvaluator:
