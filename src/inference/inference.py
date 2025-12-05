@@ -1,8 +1,10 @@
 import torch
 import pandas as pd
+
 from src.utils import retrieve_captioning
-from src.data.data_process import load_data, embdict_to_tensor
+from src.data.data_process import load_data, embdict_to_tensor, load_id2emb, PreprocessedGraphDataset, collate_fn
 from src.model.model import GEncoder
+from torch.utils.data import DataLoader
 
 model_path = "src/saved_model/model_epoch_49.pth"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -12,9 +14,6 @@ model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 
 def main():
-    from src.data.data_process import load_id2emb, PreprocessedGraphDataset, collate_fn
-    from torch.utils.data import DataLoader
-
     test_data_file = "src/data/test_graphs.pkl"
 
     test_dataset = PreprocessedGraphDataset(test_data_file, encode_feat=True)

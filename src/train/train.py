@@ -11,9 +11,9 @@ from torch.utils.data import DataLoader
 from src.model.model import GEncoder, node_feat_dim, hidden_dim
 
 
-epochs = 50
-batch_size = 32
-learning_rate = 5e-4
+epochs = 500
+batch_size = 128
+learning_rate = 1e-4
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
