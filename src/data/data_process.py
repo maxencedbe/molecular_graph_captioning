@@ -145,6 +145,14 @@ def ohe_edge_features(graph):
     graph.edge_attr = final_attr
     return graph
 
+from transformers import BertTokenizer
+TEXT_MODEL_NAME = 'bert-base-uncased'
+tokenizer = BertTokenizer.from_pretrained(TEXT_MODEL_NAME)
+
+def tokenize_descriptions(descriptions):
+    encoded = tokenizer(descriptions, padding=True, truncation=True, return_tensors='pt')
+    return encoded
+
 # =========================================================
 # Dataset that loads preprocessed graphs and text embeddings
 # =========================================================
@@ -181,7 +189,7 @@ class PreprocessedGraphDataset(Dataset):
             text_emb = self.emb_dict[id_]
             return graph, text_emb
         else:
-            return graph
+            return graph, graph.description
 
 
 def collate_fn(batch):
@@ -195,9 +203,9 @@ def collate_fn(batch):
         Batched graph or (batched_graph, stacked_text_embeddings)
     """
     if isinstance(batch[0], tuple):
-        graphs, text_embs = zip(*batch)
+        graphs, descriptions = zip(*batch)
         batch_graph = Batch.from_data_list(list(graphs))
-        text_embs = torch.stack(text_embs, dim=0)
-        return batch_graph, text_embs
+        batch_description = tokenize_descriptions(descriptions)
+        return batch_graph, batch_description
     else:
         return Batch.from_data_list(batch)

@@ -9,7 +9,7 @@ from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_capt
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
 from src.model.model import GEncoder, node_feat_dim, hidden_dim
-
+from src.model.x_model import MoLCABackbone
 
 epochs = 50
 batch_size = 32
@@ -26,14 +26,14 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
     
-    for batch_idx, (batch_graph, batch_text_emb) in enumerate(progress_bar):
+    for batch_idx, (batch_graph,batch_text) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
-        batch_text_emb = batch_text_emb.to(device)
-
+        batch_text = batch_text.to(device)
         optimizer.zero_grad()
 
-        z_graph = model(batch_graph)
-        loss = contrastive_loss(z_graph, batch_text_emb)
+        batch_score = model(batch_graph,batch_text)
+        print(batch_score)
+        loss = torch.zeros(1, device=device)
 
         loss.backward()
         optimizer.step()
@@ -119,14 +119,15 @@ def main():
 
     val_caption_tensor = embdict_to_tensor(train_emb).to(device)
 
-    train_dataset = PreprocessedGraphDataset(train_data_file, train_emb, encode_feat=True)
+    train_dataset = PreprocessedGraphDataset(train_data_file, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, val_emb, encode_feat=True)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
+    #model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
     #model = MolGNN().to(device)
+    model = MoLCABackbone().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     evaluator = MolecularCaptionEvaluator(device=device)
