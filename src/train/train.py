@@ -1,15 +1,18 @@
 import torch
 import tqdm
 import wandb
-from src.utils import retrieve_captioning, contrastive_loss, MolecularCaptionEvaluator
-from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, embdict_to_tensor
-from torch.utils.data import DataLoader
-from src.model.model import GEncoder,GEncoder2
+import os
 import torch.optim as optim
 import torch.nn.functional as F
 
-epochs = 500
-batch_size = 64
+from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_captioning 
+from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
+from torch.utils.data import DataLoader
+from src.model.model import GEncoder, node_feat_dim, hidden_dim
+
+
+epochs = 50
+batch_size = 32
 learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
@@ -30,11 +33,9 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         optimizer.zero_grad()
 
         z_graph = model(batch_graph)
-
         loss = contrastive_loss(z_graph, batch_text_emb)
 
         loss.backward()
-
         optimizer.step()
         
         batch_loss = loss.item() * batch_graph.num_graphs
@@ -44,7 +45,6 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         running_loss = total_loss / num_samples_processed
         progress_bar.set_postfix(loss=f'{running_loss:.4f}')
         
-        # Log batch metrics to W&B
         wandb.log({
             "train/batch_loss": loss.item(),
             "train/step": epoch * len(dataloader) + batch_idx
@@ -54,7 +54,7 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
     return avg_loss
 
 
-def validate_epoch(model, dataloader, caption_emb, train_data, device):
+def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluator, device):
     model.eval()
     total_loss = 0
     total_score = 0
@@ -69,24 +69,23 @@ def validate_epoch(model, dataloader, caption_emb, train_data, device):
             z_graph = model(batch_graph)
 
             loss = contrastive_loss(z_graph, batch_text_emb)
-            
-            caption_emb = caption_emb.to(device)
-            text_id = retrieve_captioning(z_graph, caption_emb)
-            pred_caption = [train_data[i].description for i in text_id.cpu().numpy()]
+            total_loss += loss.item() * batch_graph.num_graphs
 
+            text_id = retrieve_captioning(z_graph, val_caption_tensor)
+            
+            pred_caption = [val_data_list[i].description for i in text_id.cpu().numpy()]
+            
             individual_graphs = batch_graph.to_data_list()
             true_caption = [graph.description for graph in individual_graphs]
             
-            score = MolecularCaptionEvaluator().evaluate_batch(pred_caption, true_caption)
+            score = evaluator.evaluate_batch(pred_caption, true_caption)
             
             total_score += score['composite_score'] * batch_graph.num_graphs
-            total_loss += loss.item() * batch_graph.num_graphs
             
-            # Calculer les moyennes courantes
-            avg_loss = total_loss / (progress_bar.n * dataloader.batch_size + batch_graph.num_graphs)
-            avg_score = total_score / (progress_bar.n * dataloader.batch_size + batch_graph.num_graphs)
-            
-            progress_bar.set_postfix(loss=f'{avg_loss:.4f}', score=f'{avg_score:.4f}')
+            progress_bar.set_postfix(
+                v_loss=f'{total_loss / len(dataloader.dataset):.4f}', 
+                v_score=f'{total_score / len(dataloader.dataset):.4f}'
+            )
 
     avg_loss = total_loss / len(dataloader.dataset)
     avg_score = total_score / len(dataloader.dataset)
@@ -94,13 +93,11 @@ def validate_epoch(model, dataloader, caption_emb, train_data, device):
 
 
 def main():
-    from src.data.data_process import load_id2emb, PreprocessedGraphDataset, collate_fn
-    from torch.utils.data import DataLoader
-    from src.model.model import GEncoder
-    from src.model.ref_model import MolGNN
-    import torch.optim as optim
+    train_data_file = "src/data/train_graphs.pkl"
+    val_data_file = "src/data/validation_graphs.pkl"
+    train_emb_csv = "src/data/train_embeddings.csv"
+    val_emb_csv   = "src/data/validation_embeddings.csv"
 
-    # Initialize W&B
     wandb.init(
         project="molecular-captioning",
         config={
@@ -113,15 +110,14 @@ def main():
         }
     )
 
-    train_data_file = "src/data/train_graphs.pkl"
-    val_data_file = "src/data/validation_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings.csv"
-    val_emb_csv   = "src/data/validation_embeddings.csv"
+    print("Loading data...")
 
     train_emb = load_id2emb(train_emb_csv)
     val_emb = load_id2emb(val_emb_csv)
     train_data = load_data(train_data_file)
-    train_caption_tensor = embdict_to_tensor(train_emb)
+    val_data_list = load_data(val_data_file)
+
+    val_caption_tensor = embdict_to_tensor(val_emb).to(device)
 
     train_dataset = PreprocessedGraphDataset(train_data_file, train_emb, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, val_emb, encode_feat=True)
@@ -129,11 +125,12 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder().to(device)
+    model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
     #model = MolGNN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    # Watch model with W&B
+    evaluator = MolecularCaptionEvaluator(device=device)
+
     wandb.watch(model, log="all", log_freq=100)
 
     best_score = 0.0
@@ -141,23 +138,27 @@ def main():
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_loader, optimizer, device, epoch)
         
-        # Log training metrics
         wandb.log({
             "train/epoch_loss": train_loss,
             "epoch": epoch
         })
         
         if (epoch) % val_freq == 0:
-            val_loss, score = validate_epoch(model, val_loader, train_caption_tensor, train_data, device)
+            val_loss, score = validate_epoch(
+                model, 
+                val_loader, 
+                val_caption_tensor, 
+                val_data_list,
+                evaluator,
+                device
+            )
             
-            # Log validation metrics
             wandb.log({
                 "val/loss": val_loss,
                 "val/composite_score": score,
                 "epoch": epoch
             })
             
-            # Save best model
             if score > best_score:
                 best_score = score
                 torch.save(model.state_dict(), "src/saved_model/best_model.pth")
@@ -173,7 +174,6 @@ def main():
             torch.save(model.state_dict(), checkpoint_path)
             wandb.save(checkpoint_path)
 
-    # Finish W&B run
     wandb.finish()
 
 

@@ -1,5 +1,8 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from transformers import AutoTokenizer, AutoModel
 
 
 def contrastive_loss(z_graph, z_text, temp=0.07):
@@ -18,7 +21,6 @@ def contrastive_loss(z_graph, z_text, temp=0.07):
 
     return total_loss
 
-
 def retrieve_captioning(batch_z_graph, batch_text_emb):
     batch_z_graph = F.normalize(batch_z_graph, p=2, dim=1)
     batch_text_emb = F.normalize(batch_text_emb, p=2, dim=1)
@@ -27,70 +29,55 @@ def retrieve_captioning(batch_z_graph, batch_text_emb):
     return text_id #(batch_size,)
 
 
-import numpy as np
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-from transformers import AutoTokenizer, AutoModel
-
-
 class MolecularCaptionEvaluator:
     """
-    Evaluator for molecular caption generation using BLEU-4 F1 and BERTScore.
+    Évaluateur pour les légendes moléculaires utilisant BLEU-4 F1 et BERTScore 
+    (basé sur ChemBERTa).
     """
+    BERT_MODEL_NAME = "seyonec/ChemBERTa-zinc-base-v1"
     
-    def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
-        self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained("seyonec/ChemBERTa-zinc-base-v1")
-        self.bert_model = AutoModel.from_pretrained("seyonec/ChemBERTa-zinc-base-v1").to(device)
+    def __init__(self, device: str = None):
+        """Initialise le modèle ChemBERTa pour BERTScore."""
+        if device is None:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+            
+        print(f"Loading ChemBERTa on {self.device}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.BERT_MODEL_NAME)
+        self.bert_model = AutoModel.from_pretrained(self.BERT_MODEL_NAME).to(self.device)
         self.bert_model.eval()
-        self.smoothing = SmoothingFunction()
+        self.smoothing_func = SmoothingFunction().method1 # Precompute smoothing function
+
+    # --------------------------------------------------------
+    # I. Calculation of Lexical Metrics (BLEU-4 F1)
+    # --------------------------------------------------------
     
-    def compute_bleu4_f1(self, predicted_caption, reference_caption):
-        """
-        Compute BLEU-4 F1 score between predicted and reference captions.
+    def compute_bleu4_f1(self, pred: str, ref: str) -> float:
+        """Calculates BLEU-4 F1 (precision & recall based on n-grams)."""
+        pred_tokens = pred.lower().split()
+        ref_tokens = ref.lower().split()
         
-        Args:
-            predicted_caption: str, generated caption
-            reference_caption: str, ground truth caption
-            
-        Returns:
-            float: BLEU-4 F1 score
-        """
-        pred_tokens = predicted_caption.lower().split()
-        ref_tokens = reference_caption.lower().split()
+        weights = (0.25, 0.25, 0.25, 0.25)
         
-        # BLEU-4 (precision-oriented)
-        bleu_precision = sentence_bleu(
-            [ref_tokens], 
-            pred_tokens, 
-            weights=(0.25, 0.25, 0.25, 0.25),
-            smoothing_function=self.smoothing.method1
-        )
+        # Précision (BLEU P): Référence vs Prédiction
+        bleu_p = sentence_bleu([ref_tokens], pred_tokens, weights=weights, smoothing_function=self.smoothing_func)
         
-        # Reverse BLEU for recall
-        bleu_recall = sentence_bleu(
-            [pred_tokens], 
-            ref_tokens, 
-            weights=(0.25, 0.25, 0.25, 0.25),
-            smoothing_function=self.smoothing.method1
-        )
+        # Rappel (BLEU R): Prédiction vs Référence (technique du Reverse BLEU)
+        bleu_r = sentence_bleu([pred_tokens], ref_tokens, weights=weights, smoothing_function=self.smoothing_func)
         
-        # F1 score
-        if bleu_precision + bleu_recall == 0:
+        if (bleu_p + bleu_r) == 0:
             return 0.0
-        
-        bleu_f1 = 2 * (bleu_precision * bleu_recall) / (bleu_precision + bleu_recall)
-        return bleu_f1
-    
-    def get_bert_embeddings(self, text):
-        """
-        Get token embeddings from ChemBERTa model.
-        
-        Args:
-            text: str, input text
             
-        Returns:
-            torch.Tensor: embeddings of shape (seq_len, hidden_dim)
-        """
+        return 2 * (bleu_p * bleu_r) / (bleu_p + bleu_r)
+
+    # --------------------------------------------------------
+    # II. Outils d'Encodage pour BERTScore
+    # --------------------------------------------------------
+    
+    @torch.no_grad()
+    def get_token_embeddings(self, text: str) -> torch.Tensor:
+        """Obtient les embeddings de tokens du modèle ChemBERTa (non [CLS])."""
         inputs = self.tokenizer(
             text, 
             return_tensors="pt", 
@@ -99,80 +86,77 @@ class MolecularCaptionEvaluator:
             max_length=512
         ).to(self.device)
         
-        with torch.no_grad():
-            outputs = self.bert_model(**inputs)
-            # Use last hidden state
-            embeddings = outputs.last_hidden_state.squeeze(0)  # (seq_len, hidden_dim)
-        
-        return embeddings
+        outputs = self.bert_model(**inputs)
+        # Retourne le dernier état caché (B=1, Seq_len, H)
+        # On utilise squeeze(0) pour obtenir (Seq_len, H)
+        return outputs.last_hidden_state.squeeze(0) 
+
+    # --------------------------------------------------------
+    # III. Calcul des Métriques Sémantiques (BERTScore)
+    # --------------------------------------------------------
     
-    def compute_bertscore(self, predicted_caption, reference_caption):
-        """
-        Compute BERTScore using ChemBERTa embeddings.
+    def compute_bertscore(self, pred: str, ref: str) -> dict:
+        """Calcule la Précision, le Rappel et le F1 du BERTScore."""
         
-        Args:
-            predicted_caption: str, generated caption
-            reference_caption: str, ground truth caption
-            
-        Returns:
-            dict: {'precision': float, 'recall': float, 'f1': float}
-        """
-        pred_emb = self.get_bert_embeddings(predicted_caption)  
-        ref_emb = self.get_bert_embeddings(reference_caption)   
+        pred_emb = self.get_token_embeddings(pred) 
+        ref_emb = self.get_token_embeddings(ref) 
         
+        # Normalisation L2
         pred_emb_norm = F.normalize(pred_emb, p=2, dim=1)
         ref_emb_norm = F.normalize(ref_emb, p=2, dim=1)
         
+        # Matrice de Similarité Cosinus (Prédits x Référence.T)
         sim_matrix = torch.mm(pred_emb_norm, ref_emb_norm.t()) 
         
-
+        # 1. Précision BERTScore (Sim_P): Max des colonnes, moyenné sur la Prédiction (dim=1)
+        # Pour chaque token Prédit, quel est le meilleur token de Référence?
         precision = sim_matrix.max(dim=1)[0].mean().item()
+        
+        # 2. Rappel BERTScore (Sim_R): Max des lignes, moyenné sur la Référence (dim=0)
+        # Pour chaque token de Référence, quel est le meilleur token Prédit?
         recall = sim_matrix.max(dim=0)[0].mean().item()
         
         if precision + recall == 0:
             f1 = 0.0
         else:
             f1 = 2 * (precision * recall) / (precision + recall)
-        
-        return {
-            'precision': precision,
-            'recall': recall,
-            'f1': f1
-        }
-    
-    def evaluate_batch(self, predicted_captions, reference_captions):
-        """
-        Evaluate a batch of predictions.
-        
-        Args:
-            predicted_captions: list of str, generated captions
-            reference_captions: list of str, ground truth captions
             
-        Returns:
-            dict: Average scores for the batch
-        """
+        return {'precision': precision, 'recall': recall, 'f1': f1}
+    
+    # --------------------------------------------------------
+    # IV. Évaluation du Lot (API d'exécution)
+    # --------------------------------------------------------
+    
+    def evaluate_batch(self, predicted_captions: list[str], reference_captions: list[str]) -> dict:
+        """Évalue un lot de prédictions et retourne les scores moyens."""
+        
         bleu_scores = []
         bert_precisions = []
         bert_recalls = []
         bert_f1s = []
         
         for pred, ref in zip(predicted_captions, reference_captions):
-            # BLEU-4 F1
+            # 1. Calcul BLEU
             bleu_f1 = self.compute_bleu4_f1(pred, ref)
             bleu_scores.append(bleu_f1)
             
-            # BERTScore
+            # 2. Calcul BERTScore
             bert_scores = self.compute_bertscore(pred, ref)
             bert_precisions.append(bert_scores['precision'])
             bert_recalls.append(bert_scores['recall'])
             bert_f1s.append(bert_scores['f1'])
+            
+        
+        # Calcul des moyennes
+        bleu_f1_mean = np.mean(bleu_scores)
+        bert_f1_mean = np.mean(bert_f1s)
         
         return {
-            'bleu4_f1_mean': np.mean(bleu_scores),
+            'bleu4_f1_mean': bleu_f1_mean,
             'bertscore_precision_mean': np.mean(bert_precisions),
             'bertscore_recall_mean': np.mean(bert_recalls),
-            'bertscore_f1_mean': np.mean(bert_f1s),
-            'composite_score': (np.mean(bleu_scores) + np.mean(bert_f1s)) / 2
+            'bertscore_f1_mean': bert_f1_mean,
+            'composite_score': (bleu_f1_mean + bert_f1_mean) / 2
         }
 
 
