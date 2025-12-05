@@ -117,7 +117,7 @@ def main():
     train_data = load_data(train_data_file)
     val_data_list = load_data(val_data_file)
 
-    val_caption_tensor = embdict_to_tensor(val_emb).to(device)
+    val_caption_tensor = embdict_to_tensor(train_emb).to(device)
 
     train_dataset = PreprocessedGraphDataset(train_data_file, train_emb, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, val_emb, encode_feat=True)
@@ -148,7 +148,7 @@ def main():
                 model, 
                 val_loader, 
                 val_caption_tensor, 
-                val_data_list,
+                train_data,
                 evaluator,
                 device
             )
