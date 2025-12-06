@@ -205,7 +205,7 @@ def collate_fn(batch):
     if isinstance(batch[0], tuple):
         graphs, descriptions = zip(*batch)
         batch_graph = Batch.from_data_list(list(graphs))
-        batch_description = tokenize_descriptions(descriptions)
+        batch_description = descriptions
         return batch_graph, batch_description
     else:
         return Batch.from_data_list(batch)

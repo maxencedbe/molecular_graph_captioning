@@ -2,23 +2,20 @@ import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import AutoModel, AutoConfig
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import to_dense_batch
-# --- Hyperparamètres de Base ---
-# Note : Ces valeurs sont indicatives et doivent être ajustées
+
+
 class HParams:
-    GNN_EMB_DIM = 256
-    TEXT_MODEL_NAME = 'bert-base-uncased' # Modèle pré-entraîné pour le texte
-    EMBEDDING_DIM = 768 # Taille de l'intégration de BERT
+    EMBEDDING_DIM = 768 
     NUM_HEADS = 8
     MARGIN = 0.5
     DROPOUT_RATE = 0.1
 
 H = HParams()
 
-# =================================================================
-## 1. Encodeur de Graphe (Molécule)
-# =================================================================
+
 
 node_feat_dim = 177
 edge_feat_dim = 30
@@ -102,77 +99,132 @@ class GEncoder(nn.Module):
         z_graph = self.projection_head(x)
 
         return z_graph
-    
 
 
-# =================================================================
-## 2. Encodeur de Texte (Transformer)
-# =================================================================
-
-class TextEncoder(nn.Module):
-    def __init__(self, model_name):
-        super(TextEncoder, self).__init__()
-        # Utiliser l'encodeur BERT pré-entraîné
-        self.bert = AutoModel.from_pretrained(model_name)
-        # S'assurer que les dimensions correspondent si elles ont été modifiées
-        config = AutoConfig.from_pretrained(model_name)
-        self.output_dim = config.hidden_size # 768 pour bert-base-uncased
-
-    def forward(self, input_ids, attention_mask):
-        # La sortie (output) est un tuple, le premier élément [0] est l'intégration des jetons
-        output = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        # Sortie : H_text (inclut le jeton [CLS] en position 0)
-        # Shape: (Batch_Size * Longueur_Seq, EMBEDDING_DIM)
-        return output[0] # token_embeddings
-
-# =================================================================
-## 3. Modèle de Cross-Attention (MoLCA Backbone)
-# =================================================================
 
 class MoLCABackbone(nn.Module):
-    def __init__(self, gnn_input_dim=177):
+    def __init__(self, gnn_input_dim=177, model_name="gpt2"):
         super(MoLCABackbone, self).__init__()
         
-        gnn_output_dim = H.EMBEDDING_DIM 
-
+        # Encodeur de graphe
         self.gnn_encoder = GEncoder()
-        self.text_encoder = TextEncoder(H.TEXT_MODEL_NAME)
         
-        self.cross_attention = nn.MultiheadAttention(
-            embed_dim=H.EMBEDDING_DIM,
-            num_heads=H.NUM_HEADS,
-            dropout=H.DROPOUT_RATE,
-            batch_first=True
-        )
-        self.norm = nn.LayerNorm(H.EMBEDDING_DIM)
+        # LLM pré-chargé (GPT-2)
+        self.llm = GPT2LMHeadModel.from_pretrained(model_name)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         
-
-        self.score_head = nn.Sequential(
-            nn.Linear(H.EMBEDDING_DIM, H.EMBEDDING_DIM // 2),
+        # Dimension des embeddings GPT-2
+        self.hidden_size = self.llm.config.hidden_size
+        
+        # Projection des embeddings de graphe vers l'espace GPT-2
+        self.graph_projection = nn.Sequential(
+            nn.Linear(H.EMBEDDING_DIM, self.hidden_size),  # 256 = sortie de GEncoder
+            nn.LayerNorm(self.hidden_size),
             nn.ReLU(),
-            nn.Dropout(H.DROPOUT_RATE),
-            nn.Linear(H.EMBEDDING_DIM // 2, 1) # Score final
+            nn.Dropout(0.1)
         )
-
-    def forward(self, mol_data, text_data):
-
+    
+    def forward(self, mol_data, batch_text, return_loss=True):
+        """
+        Args:
+            mol_data: données du graphe moléculaire
+            batch_text: dict avec 'input_ids' et 'attention_mask' ou textes bruts
+            return_loss: si True, calcule la loss, sinon génère du texte
+        
+        Returns:
+            loss ou texte généré selon le mode
+        """
         H_mol = self.gnn_encoder(mol_data)
-        H_mol, _ = to_dense_batch(H_mol, mol_data.batch)
+        H_mol, mask = to_dense_batch(H_mol, mol_data.batch)
+        batch_size = H_mol.size(0)
+ 
+        H_mol_projected = self.graph_projection(H_mol)  # [batch, num_nodes, hidden_size]
+        
+        if return_loss:
 
-        H_text = self.text_encoder(text_data['input_ids'], text_data['attention_mask']).squeeze(0)
+            input_ids = batch_text['input_ids']
+            attention_mask = batch_text['attention_mask']
+            
+            text_embeds = self.llm.transformer.wte(input_ids)  # [batch, seq_len, hidden_size]
+            
+            combined_embeds = torch.cat([H_mol_projected, text_embeds], dim=1)
+            
+            graph_attention_mask = mask.float()
+            combined_attention_mask = torch.cat([
+                graph_attention_mask, 
+                attention_mask.float()
+            ], dim=1)
+            
+            graph_length = H_mol_projected.size(1)
+            labels = torch.cat([
+                torch.full((batch_size, graph_length), -100, device=input_ids.device, dtype=input_ids.dtype),
+                input_ids
+            ], dim=1)
+            
+            outputs = self.llm(
+                inputs_embeds=combined_embeds,
+                attention_mask=combined_attention_mask,
+                labels=labels
+            )
+            
+            return outputs.loss
         
-        H_prime_text, attn_weights = self.cross_attention(
-            query=H_text,
-            key=H_mol,
-            value=H_mol
-        )
-        
-        # residual connection 
-        H_prime_text = self.norm(H_prime_text + H_text) 
-        
-        # cls token
-        E_paire = H_prime_text[:, 0, :] 
-        score = self.score_head(E_paire)
-        
-        return torch.sigmoid(score.squeeze(1)) 
+        else:
 
+            if isinstance(batch_text, str):
+                batch_text = [batch_text] * batch_size
+            
+            inputs = self.tokenizer(
+                batch_text, 
+                return_tensors="pt", 
+                padding=True, 
+                truncation=True
+            ).to(H_mol.device)
+            
+            # Obtenir les embeddings du prompt
+            prompt_embeds = self.llm.transformer.wte(inputs['input_ids'])
+            
+            # Concaténer
+            combined_embeds = torch.cat([H_mol_projected, prompt_embeds], dim=1)
+            
+            # Créer le masque d'attention
+            graph_attention_mask = mask.float()
+            combined_attention_mask = torch.cat([
+                graph_attention_mask,
+                inputs['attention_mask'].float()
+            ], dim=1)
+            
+            # Générer avec le LLM
+            outputs = self.llm.generate(
+                inputs_embeds=combined_embeds,
+                attention_mask=combined_attention_mask,
+                max_length=combined_embeds.size(1) + 50,  # Ajustable
+                temperature=0.7,
+                do_sample=True,
+                top_k=50,
+                top_p=0.95,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
+            )
+            
+            prompt_length = combined_embeds.size(1)
+            generated_tokens = outputs[:, prompt_length:]
+            generated_text = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+            
+            return generated_text
+    
+    def generate(self, mol_data, prompt="Description: ", max_length=50, temperature=0.7):
+        """
+        Méthode utilitaire pour générer du texte
+        
+        Args:
+            mol_data: données du graphe moléculaire
+            prompt: prompt textuel
+            max_length: nombre de tokens à générer
+            temperature: température de génération
+        
+        Returns:
+            generated_text: liste de textes générés
+        """
+        return self.forward(mol_data, prompt, return_loss=False)
