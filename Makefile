@@ -23,7 +23,7 @@ env:
 	@uv pip install -r requirements.txt --python $(UV_PYTHON_EXEC)
 	@echo "Evaluation environment ready."
 
-data_process:
+test_data:
 	@echo "Processing data..."
 	@$(PYTHON_EXEC) src/test_data.py
 	@echo "Data processing complete."
@@ -41,4 +41,9 @@ train:
 infer:
 	@echo "Running inference..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
+	@echo "Inference complete."
+
+add_smiles:
+	@echo "Adding smiles to data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/add_smiles.py
 	@echo "Inference complete."

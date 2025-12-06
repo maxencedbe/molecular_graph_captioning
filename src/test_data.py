@@ -2,7 +2,7 @@ from data.data_process import load_data,ohe_node_features,ohe_edge_features
 
 
 if __name__ == "__main__":
-    data_file = "src/data/test_graphs.pkl"
+    data_file = "src/data/test_graphs_smiles.pkl"
     data = load_data(data_file)
     print("Data loaded successfully:")
     print(data[0])
