@@ -6,3 +6,6 @@ tqdm>=4.65.0
 rdkit>=2023.3.1
 nltk>=3.8.0
 wandb
+hf_transfer
+tiktoken
+sentencepiece

@@ -189,7 +189,7 @@ class PreprocessedGraphDataset(Dataset):
             text_emb = self.emb_dict[id_]
             return graph, text_emb
         else:
-            return graph, graph.description
+            return graph, graph.smiles, graph.description
 
 
 def collate_fn(batch):
@@ -203,9 +203,8 @@ def collate_fn(batch):
         Batched graph or (batched_graph, stacked_text_embeddings)
     """
     if isinstance(batch[0], tuple):
-        graphs, descriptions = zip(*batch)
+        graphs, smiles,descriptions = zip(*batch)
         batch_graph = Batch.from_data_list(list(graphs))
-        batch_description = descriptions
-        return batch_graph, batch_description
+        return batch_graph, smiles, descriptions
     else:
         return Batch.from_data_list(batch)

@@ -3,20 +3,20 @@ import tqdm
 import wandb
 import os
 import torch.optim as optim
-from transformers import GPT2Tokenizer
 
 from src.utils import MolecularCaptionEvaluator
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
 from torch.utils.data import DataLoader
-from src.model.x_model import MoLCABackbone
+from src.model.test_t5 import MoLCABackbone_T5
+
 
 epochs = 50
-batch_size = 16  # Réduit car GPT-2 est plus lourd
-learning_rate = 5e-5  # Plus faible pour éviter catastrophic forgetting
+batch_size = 16 
+learning_rate = 5e-5  
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
-max_length = 128  # Longueur max des séquences
+max_length = 128  
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -26,36 +26,27 @@ def train_epoch(model, dataloader, optimizer, tokenizer, device, epoch):
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc=f"Training Epoch {epoch+1}", leave=False)
     
-    for batch_idx, (batch_graph, batch_text_raw) in enumerate(progress_bar):
+    for batch_idx, (batch_graph, batch_smiles, batch_descriptions) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
         batch_size = batch_graph.num_graphs
         
-        # Extraire les descriptions textuelles du batch
-        if isinstance(batch_text_raw, dict):
-            # Si batch_text_raw est déjà tokenisé
-            batch_text = {k: v.to(device) for k, v in batch_text_raw.items()}
-        else:
-            # Si batch_text_raw contient les descriptions brutes
-            descriptions = [data.description for data in batch_graph.to_data_list()]
-            
-            # Tokeniser les descriptions
-            batch_text = tokenizer(
-                descriptions,
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-                return_tensors='pt'
-            )
-            batch_text = {k: v.to(device) for k, v in batch_text.items()}
+        # batch_smiles est une liste de SMILES strings
+        # batch_descriptions est une liste de descriptions strings
+        
+        labels = tokenizer(
+            batch_descriptions,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_tensors='pt'
+        )
+        labels = {k: v.to(device) for k, v in labels.items()}
         
         optimizer.zero_grad()
 
-        # Forward pass : calcule automatiquement la cross-entropy loss
-        loss = model(batch_graph, batch_text, return_loss=True)
-        
+        loss = model(batch_graph, batch_smiles, labels=labels, return_loss=True)        
         loss.backward()
         
-        # Gradient clipping pour stabilité
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
         optimizer.step()
@@ -86,38 +77,26 @@ def validate_epoch(model, dataloader, val_data_list, evaluator, tokenizer, devic
     progress_bar = tqdm.tqdm(dataloader, desc="Validation", leave=False)
     
     with torch.no_grad():
-        for batch_graph, batch_text_raw in progress_bar:
+        for batch_graph, batch_smiles, batch_descriptions in progress_bar:
             batch_graph = batch_graph.to(device)
             batch_size = batch_graph.num_graphs
             
-            # Extraire les vraies descriptions
-            individual_graphs = batch_graph.to_data_list()
-            true_captions = [graph.description for graph in individual_graphs]
+            labels = tokenizer(
+                batch_descriptions,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors='pt'
+            )
+            labels = {k: v.to(device) for k, v in labels.items()}
             
-            # Tokeniser pour calcul de loss
-            if isinstance(batch_text_raw, dict):
-                batch_text = {k: v.to(device) for k, v in batch_text_raw.items()}
-            else:
-                batch_text = tokenizer(
-                    true_captions,
-                    padding=True,
-                    truncation=True,
-                    max_length=max_length,
-                    return_tensors='pt'
-                )
-                batch_text = {k: v.to(device) for k, v in batch_text.items()}
-            
-            # Calcul de la loss
-            loss = model(batch_graph, batch_text, return_loss=True)
+            loss = model(batch_graph, batch_smiles, labels=labels, return_loss=True)
             total_loss += loss.item() * batch_size
             
-            # Génération de prédictions pour évaluation
-            # Utiliser un prompt simple
-            prompt = "Description: "
-            generated_texts = model.generate(batch_graph, prompt, max_length=80)
+            generated_texts = model.generate(batch_graph, batch_smiles, max_length=150, num_beams=5)
             
             all_predictions.extend(generated_texts)
-            all_references.extend(true_captions)
+            all_references.extend(batch_descriptions)
             
             num_samples_processed += batch_size
             
@@ -127,15 +106,14 @@ def validate_epoch(model, dataloader, val_data_list, evaluator, tokenizer, devic
     
     avg_loss = total_loss / num_samples_processed
     
-    # Évaluation avec les métriques
     eval_results = evaluator.evaluate_batch(all_predictions, all_references)
     
     return avg_loss, eval_results
 
 
 def main():
-    train_data_file = "src/data/train_graphs.pkl"
-    val_data_file = "src/data/validation_graphs.pkl"
+    train_data_file = "src/data/train_graphs_smiles.pkl"
+    val_data_file = "src/data/validation_graphs_smiles.pkl"
 
     wandb.init(
         project="molecular-captioning-gpt2",
@@ -151,16 +129,16 @@ def main():
     )
 
     print("Loading data and model...")
-    
-    # Charger le tokenizer
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        "GT4SD/multitask-text-and-chemistry-t5-base-standard",
+        use_fast=False
+    )
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Charger les données
     train_data_list = load_data(train_data_file)
     val_data_list = load_data(val_data_file)
 
-    # Dataset personnalisé qui retourne les graphes et les textes
     train_dataset = PreprocessedGraphDataset(train_data_file, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, encode_feat=True)
     
@@ -178,14 +156,17 @@ def main():
     )
 
     # Initialiser le modèle
-    model = MoLCABackbone(model_name="gpt2").to(device)
+    model = MoLCABackbone_T5(
+        model_name="GT4SD/multitask-text-and-chemistry-t5-base-standard",
+        graph_hidden_dim=300,
+        freeze_encoder=True,  
+        freeze_decoder=True   
+    ).to(device)
     
-    # Optimizer avec différents learning rates
-    # Plus faible pour GPT-2, plus élevé pour la projection
+
     optimizer = optim.AdamW([
-        {'params': model.llm.parameters(), 'lr': learning_rate * 0.1},  # Fine-tune léger
+        {'params': model.gnn_encoder.parameters(), 'lr': learning_rate},
         {'params': model.graph_projection.parameters(), 'lr': learning_rate},
-        {'params': model.gnn_encoder.parameters(), 'lr': learning_rate}
     ], weight_decay=weight_decay)
     
     # Learning rate scheduler
