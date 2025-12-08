@@ -6,7 +6,7 @@ from src.data.data_process import load_data, embdict_to_tensor, load_id2emb, Pre
 from src.model.model import GEncoder
 from torch.utils.data import DataLoader
 
-model_path = "src/saved_model/model_epoch_49.pth"
+model_path = "src/saved_model/best_model_gencoder.pth"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = GEncoder().to(device)
 

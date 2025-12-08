@@ -4,23 +4,24 @@ import wandb
 import os
 import torch.optim as optim
 import torch.nn.functional as F
+from transformers import get_linear_schedule_with_warmup  # Import ajouté
 
-from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import contrastive_loss,contrastive_cosface_loss, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model import GEncoder, node_feat_dim, hidden_dim
+from src.model.model import GEncoder, GraphT5_GINEncoder, node_feat_dim, hidden_dim
 
 
-epochs = 500
-batch_size = 128
-learning_rate = 1e-4
+epochs = 50
+batch_size = 32
+learning_rate = 1e-5
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train_epoch(model, dataloader, optimizer, device, epoch):
+def train_epoch(model, dataloader, optimizer, scheduler, device, epoch): 
     model.train()
     total_loss = 0
     num_samples_processed = 0
@@ -36,7 +37,9 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         loss = contrastive_loss(z_graph, batch_text_emb)
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        scheduler.step()
         
         batch_loss = loss.item() * batch_graph.num_graphs
         total_loss += batch_loss
@@ -47,6 +50,7 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         
         wandb.log({
             "train/batch_loss": loss.item(),
+            "train/learning_rate": scheduler.get_last_lr()[0], 
             "train/step": epoch * len(dataloader) + batch_idx
         })
 
@@ -58,7 +62,8 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
     model.eval()
     total_loss = 0
     total_score = 0
-    
+    total_bleu = 0
+    total_bert = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Validation", leave=False)
     
     with torch.no_grad():
@@ -81,12 +86,14 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
             score = evaluator.evaluate_batch(pred_caption, true_caption)
             
             total_score += score['composite_score'] * batch_graph.num_graphs
-            
+            total_bleu += score['bleu4_f1_mean'] * batch_graph.num_graphs
+            total_bert += score['bertscore_f1_mean'] * batch_graph.num_graphs
+
             progress_bar.set_postfix(
                 v_loss=f'{total_loss / len(dataloader.dataset):.4f}', 
                 v_score=f'{total_score / len(dataloader.dataset):.4f}'
             )
-
+    print(f"Validation BLEU-4 F1: {total_bleu / len(dataloader.dataset):.4f}, BERTScore F1: {total_bert / len(dataloader.dataset):.4f}")
     avg_loss = total_loss / len(dataloader.dataset)
     avg_score = total_score / len(dataloader.dataset)
     return avg_loss, avg_score
@@ -125,9 +132,20 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
+    #model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
     #model = MolGNN().to(device)
+    model = GraphT5_GINEncoder().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    total_steps = len(train_loader) * epochs
+    num_warmup_steps = int(0.1 * total_steps) 
+    
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, 
+        num_warmup_steps=num_warmup_steps, 
+        num_training_steps=total_steps
+    )
+    # -------------------------------
 
     evaluator = MolecularCaptionEvaluator(device=device)
 
@@ -136,7 +154,7 @@ def main():
     best_score = 0.0
     
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, device, epoch)
+        train_loss = train_epoch(model, train_loader, optimizer, scheduler, device, epoch)
         
         wandb.log({
             "train/epoch_loss": train_loss,
