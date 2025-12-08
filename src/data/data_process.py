@@ -181,8 +181,6 @@ class PreprocessedGraphDataset(Dataset):
 
     def __getitem__(self, idx):
         graph = self.graphs[idx]
-        if self.encode_feat : 
-            pass
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]
@@ -201,9 +199,10 @@ def collate_fn(batch):
     Returns:
         Batched graph or (batched_graph, stacked_text_embeddings)
     """
-    if isinstance(batch[0], tuple):
-        graphs, smiles,descriptions = zip(*batch)
-        batch_graph = Batch.from_data_list(list(graphs))
-        return batch_graph, smiles, descriptions
-    else:
-        return Batch.from_data_list(batch)
+    out = list(zip(*batch))
+    batch_graph = Batch.from_data_list(out[0])
+    text_embs = torch.stack(out[1], dim=0)
+    if len(out)==2:
+        return batch_graph,text_embs
+    else : 
+        return batch_graph,text_embs,out[2]
