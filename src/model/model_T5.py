@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from src.model.model_Genc import GEncoder, GEncParams
-from transformers import T5ForConditionalGeneration, AutoTokenizer
+from transformers import T5ForConditionalGeneration, T5Tokenizer
 
 enc_params = GEncParams()
 class GraphCapT5(nn.Module):
@@ -13,7 +13,7 @@ class GraphCapT5(nn.Module):
         super(GraphCapT5, self).__init__()
         
         self.t5_model = T5ForConditionalGeneration.from_pretrained(model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = T5Tokenizer.from_pretrained(model_name)
         
         self.hidden_size = self.t5_model.config.d_model  
         
@@ -67,6 +67,13 @@ class GraphCapT5(nn.Module):
             attention_mask=smiles_inputs['attention_mask']
         )
         H_smiles = smiles_encoder_outputs.last_hidden_state  # [B, smiles_len, hidden_size]
+
+        prompt_encoder_outputs = self.t5_model.encoder(
+            input_ids=prompt_inputs['input_ids'],
+            attention_mask=prompt_inputs['attention_mask']
+        )
+        H_prompt = prompt_encoder_outputs.last_hidden_stat  # [1, prompt_len, hidden_size]
+        H_prompt = H_prompt.expand(batch_size, -1, -1)  # [B, prompt_len, hidden_size]
         
         combined_encoder_hidden = torch.cat([H_graph, H_smiles], dim=1)
         combined_attention_mask = torch.cat([
@@ -79,26 +86,11 @@ class GraphCapT5(nn.Module):
                 raise ValueError("labels must be provided when return_loss=True")
             
             decoder_input_ids = labels['input_ids'].to(combined_encoder_hidden.device)
-            prompt_input_ids = prompt_inputs['input_ids'].to(combined_encoder_hidden.device) 
-
-            prompt_input_ids_batch = prompt_input_ids.repeat(batch_size, 1)
-            decoder_input_ids_concat = torch.cat([prompt_input_ids_batch, decoder_input_ids], dim=1)
-
-            prompt_attention_mask_batch = prompt_inputs['attention_mask'].to(combined_encoder_hidden.device).repeat(batch_size, 1)
-            decoder_attention_mask = labels['attention_mask'].to(combined_encoder_hidden.device)
-            decoder_attention_mask_concat = torch.cat([prompt_attention_mask_batch, decoder_attention_mask], dim=1)
-
-            prompt_loss_mask = torch.full_like(prompt_input_ids_batch, -100)
-            labels_concat = torch.cat([prompt_loss_mask, decoder_input_ids], dim=1)
-
-
 
             outputs = self.t5_model(
                 encoder_outputs=(combined_encoder_hidden,), 
                 attention_mask=combined_attention_mask,
-                decoder_input_ids=decoder_input_ids_concat, 
-                decoder_attention_mask=decoder_attention_mask_concat, 
-                labels=labels_concat 
+                labels=decoder_input_ids 
             )
             
             return outputs.loss
@@ -106,16 +98,11 @@ class GraphCapT5(nn.Module):
         else:
             from transformers.modeling_outputs import BaseModelOutput
 
-            decoder_input_ids = prompt_inputs['input_ids'].to(combined_encoder_hidden.device)
-            decoder_attention_mask = prompt_inputs['attention_mask'].to(combined_encoder_hidden.device)
-
             generated_ids = self.t5_model.generate(
                 encoder_outputs=BaseModelOutput(
                     last_hidden_state=combined_encoder_hidden
                 ),
                 attention_mask=combined_attention_mask,
-                decoder_input_ids=decoder_input_ids,
-                decoder_attention_mask=decoder_attention_mask,
                 max_length=150,
                 num_beams=5,
                 early_stopping=True,

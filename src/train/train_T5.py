@@ -7,7 +7,7 @@ import torch.optim as optim
 from src.utils import MolecularCaptionEvaluator
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
 from torch.utils.data import DataLoader
-from src.model.model_T5 import MoLCABackbone_T5
+from src.model.model_T5 import GraphCapT5
 
 
 epochs = 50
@@ -126,7 +126,7 @@ def main():
     )
 
     print("Loading data and model...")
-    from transformers import T5Tokenizer, T5ForConditionalGeneration
+    from transformers import T5Tokenizer
 
     tokenizer = T5Tokenizer.from_pretrained("laituan245/molt5-large-smiles2caption", model_max_length=512)
     tokenizer.pad_token = tokenizer.eos_token
@@ -150,9 +150,8 @@ def main():
         collate_fn=collate_fn
     )
 
-    model = MoLCABackbone_T5(
-        model_name="GT4SD/multitask-text-and-chemistry-t5-base-standard",
-        graph_hidden_dim=300,
+    model = GraphCapT5(
+        model_name="laituan245/molt5-large-smiles2caption",
         freeze_encoder=True,  
         freeze_decoder=True   
     ).to(device)
