@@ -13,8 +13,8 @@ from src.model.model import GEncoder, GraphT5_GINEncoder, node_feat_dim, hidden_
 
 
 epochs = 50
-batch_size = 32
-learning_rate = 1e-5
+batch_size = 64
+learning_rate = 5e-5
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
@@ -132,9 +132,9 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    #model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
+    model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
     #model = MolGNN().to(device)
-    model = GraphT5_GINEncoder().to(device)
+    #model = GraphT5_GINEncoder().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     total_steps = len(train_loader) * epochs
