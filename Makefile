@@ -1,16 +1,6 @@
 PYTHON_VERSION := 3.11
 VENV  := .venv
 
-UNAME_S := $(shell uname -s)
-
-ifeq ($(findstring NT,$(UNAME_S)),NT)
-    PYTHON_EXEC := $(VENV)/Scripts/python.exe
-    UV_PYTHON_EXEC := $(VENV)/Scripts/python.exe
-else
-    PYTHON_EXEC := $(VENV)/bin/python
-    UV_PYTHON_EXEC := $(VENV)/bin/python
-endif
-
 .PHONY: env data_process test_model train infer
 
 env:
@@ -33,12 +23,17 @@ test_model:
 	@$(PYTHON_EXEC) src/test_model.py
 	@echo "Model testing complete."
 
-train:
+train_enc:
 	@echo "Training model..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
+	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_Genc.py
 	@echo "Model training complete."
 
-infer:
+train_t5:
+	@echo "Training model..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_T5.py
+	@echo "Model training complete."
+
+infer_enc:
 	@echo "Running inference..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
+	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/infer_enc.py
 	@echo "Inference complete."

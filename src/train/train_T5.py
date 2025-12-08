@@ -7,16 +7,16 @@ import torch.optim as optim
 from src.utils import MolecularCaptionEvaluator
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn
 from torch.utils.data import DataLoader
-from src.model.test_t5 import MoLCABackbone_T5
+from src.model.model_T5 import MoLCABackbone_T5
 
 
 epochs = 50
-batch_size = 16 
+batch_size = 32 
 learning_rate = 5e-5  
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
-max_length = 128  
+max_length = 512  
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -29,9 +29,6 @@ def train_epoch(model, dataloader, optimizer, tokenizer, device, epoch):
     for batch_idx, (batch_graph, batch_smiles, batch_descriptions) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
         batch_size = batch_graph.num_graphs
-        
-        # batch_smiles est une liste de SMILES strings
-        # batch_descriptions est une liste de descriptions strings
         
         labels = tokenizer(
             batch_descriptions,
@@ -116,24 +113,22 @@ def main():
     val_data_file = "src/data/validation_graphs_smiles.pkl"
 
     wandb.init(
-        project="molecular-captioning-gpt2",
+        project="molecular-captioning-t5",
         config={
             "epochs": epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "max_length": max_length,
-            "architecture": "GEncoder + GPT2",
+            "architecture": "GEncoder + T5",
             "device": str(device)
         }
     )
 
     print("Loading data and model...")
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        "GT4SD/multitask-text-and-chemistry-t5-base-standard",
-        use_fast=False
-    )
+    from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+    tokenizer = T5Tokenizer.from_pretrained("laituan245/molt5-large-smiles2caption", model_max_length=512)
     tokenizer.pad_token = tokenizer.eos_token
 
     train_data_list = load_data(train_data_file)
@@ -155,7 +150,6 @@ def main():
         collate_fn=collate_fn
     )
 
-    # Initialiser le modèle
     model = MoLCABackbone_T5(
         model_name="GT4SD/multitask-text-and-chemistry-t5-base-standard",
         graph_hidden_dim=300,
@@ -169,7 +163,6 @@ def main():
         {'params': model.graph_projection.parameters(), 'lr': learning_rate},
     ], weight_decay=weight_decay)
     
-    # Learning rate scheduler
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     
     evaluator = MolecularCaptionEvaluator(device=device)
@@ -206,9 +199,8 @@ def main():
             wandb.log({
                 "val/loss": val_loss,
                 "val/composite_score": composite_score,
-                "val/bleu": eval_results.get('bleu', 0),
-                "val/rouge": eval_results.get('rouge', 0),
-                "val/meteor": eval_results.get('meteor', 0),
+                "val/bleu_f1": eval_results.get('bleu_f1_mean', 0),
+                "val/bert_f1": eval_results.get('rouge', 0),
                 "epoch": epoch
             })
             

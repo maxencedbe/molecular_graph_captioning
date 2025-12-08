@@ -2,7 +2,7 @@ import torch
 import pandas as pd
 from src.utils import retrieve_captioning
 from src.data.data_process import load_data, embdict_to_tensor
-from src.model.model import GEncoder
+from src.model.model_Genc import GEncoder
 
 model_path = "src/saved_model/model_epoch_49.pth"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

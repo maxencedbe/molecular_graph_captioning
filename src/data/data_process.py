@@ -182,8 +182,7 @@ class PreprocessedGraphDataset(Dataset):
     def __getitem__(self, idx):
         graph = self.graphs[idx]
         if self.encode_feat : 
-            graph = ohe_node_features(graph)
-            graph = ohe_edge_features(graph)
+            pass
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]

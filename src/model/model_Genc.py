@@ -7,21 +7,30 @@ from torch_geometric.utils import to_dense_batch
 import torch.nn.functional as F
 
 
-node_feat_dim = 177
-edge_feat_dim = 30
-hidden_dim = 512
-projection_dim = 768
-hiddden_dim_n = 512
-hidden_dim_e = 128
+
+class GEncParams:
+    node_feat_dim = 177
+    edge_feat_dim = 30
+
+    projection_dim = 768
+
+    hidden_dim = 512
+    hiddden_dim_n = 512
+    hidden_dim_e = 128
+
+params = GEncParams()
 
 class MolEncoder(nn.Module):
-    def __init__(self, hidden_dim_n=512,hidden_dim_e=hidden_dim_e):
+    def __init__(self, params=params):
         super(MolEncoder, self).__init__()
         
+        hidden_dim_n = params.hiddden_dim_n
+        hidden_dim_e = params.hidden_dim_e
+
         self.feat_dims = [119, 9, 11, 12, 9, 5, 8, 2, 2] 
         self.edge_dims = [22,  6, 2] 
         self.embeddings = nn.ModuleList([
-            nn.Embedding(dim, hidden_dim) for dim in self.feat_dims
+            nn.Embedding(dim, hidden_dim_n) for dim in self.feat_dims
         ])
 
         self.embeddings_e = nn.ModuleList([
@@ -43,10 +52,10 @@ class MolEncoder(nn.Module):
 
 
 class MessagePassing(MessagePassing):
-    def __init__(self, in_channels, out_channels, dropout=0.1):
+    def __init__(self, in_channels, out_channels, params=params, dropout=0.1):
         super(MessagePassing, self).__init__(aggr='add', flow='source_to_target')
 
-        mlp_in_dim = in_channels + hidden_dim_e 
+        mlp_in_dim = in_channels + params.hidden_dim_e 
 
         self.mlp_message = nn.Sequential(
             nn.Linear(mlp_in_dim, out_channels),
@@ -73,18 +82,21 @@ class MessagePassing(MessagePassing):
 
 
 class GEncoder(nn.Module):
-    def __init__(self, num_layers=3, in_dim=node_feat_dim, hidden_dim=hidden_dim, dropout=0.1):
+    def __init__(self, num_layers=3, hidden_dim=params.hidden_dim, params=params, dropout=0.1):
         super(GEncoder, self).__init__()
+        
+        hidden_dim = params.hidden_dim
+        projection_dim = params.projection_dim 
 
         self.layers = nn.ModuleList()
         self.norms = nn.ModuleList()
         self.ffn = nn.ModuleList()
         self.dropout_layer = nn.Dropout(dropout)
 
-        self.input_proj = MolEncoder()
+        self.input_proj = MolEncoder(params=params)
             
         for i in range(num_layers):
-            self.layers.append(MessagePassing(hidden_dim, hidden_dim, dropout=dropout))
+            self.layers.append(MessagePassing(hidden_dim, hidden_dim, params=params, dropout=dropout))
             self.norms.append(nn.RMSNorm(hidden_dim))
             self.ffn.append(nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),

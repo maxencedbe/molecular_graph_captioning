@@ -1,5 +1,5 @@
 from data.data_process import load_data, ohe_edge_features, ohe_node_features
-from model.model import GEncoder
+from src.model.model_Genc import GEncoder
 import torch
 
 
