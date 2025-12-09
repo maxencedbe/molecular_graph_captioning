@@ -100,7 +100,7 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 
 
 def main():
-    train_data_file = "src/data/train_graphs.pkl"
+    train_data_file = "src/data/full_train_fused.pt"
     val_data_file = "src/data/validation_graphs.pkl"
     train_emb_csv = "src/data/train_embeddings.csv"
     val_emb_csv   = "src/data/validation_embeddings.csv"
@@ -123,7 +123,7 @@ def main():
     val_emb = load_id2emb(val_emb_csv)
     train_data = load_data(train_data_file)
     val_data_list = load_data(val_data_file)
-
+    print(train_data[0])
     val_caption_tensor = embdict_to_tensor(train_emb).to(device)
 
     train_dataset = PreprocessedGraphDataset(train_data_file, train_emb, encode_feat=True)

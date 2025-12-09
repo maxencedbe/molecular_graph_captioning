@@ -5,10 +5,10 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch
 
-def load_data(file_path: str) -> List[Batch]:
-    with open(file_path, 'rb') as f:
-        graphs = pickle.load(f)
-    return graphs
+#def load_data(file_path: str) -> List[Batch]:
+#    with open(file_path, 'rb') as f:
+#        graphs = pickle.load(f)
+#    return graphs
 
 # =========================================================
 # Feature maps for atom and bond attributes
@@ -159,9 +159,10 @@ def tokenize_descriptions(descriptions):
 class PreprocessedGraphDataset(Dataset):
     """
     Dataset that loads pre-saved molecule graphs with optional text embeddings.
+    Supports both .pkl and .pt file formats.
     
     Args:
-        graph_path: Path to .pkl file containing list of pre-saved graphs
+        graph_path: Path to .pkl or .pt file containing list of pre-saved graphs
         emb_dict: Dictionary mapping ID to text embedding tensors (optional)
         encode_feat: whether to encode the features or not (OHE)
     """
@@ -169,8 +170,16 @@ class PreprocessedGraphDataset(Dataset):
                  emb_dict: Dict[str, torch.Tensor] = None,
                  encode_feat: bool = True):
         print(f"Loading graphs from: {graph_path}")
-        with open(graph_path, 'rb') as f:
-            self.graphs = pickle.load(f)
+        
+        # Détection automatique du format
+        if graph_path.endswith('.pt'):
+            self.graphs = torch.load(graph_path, weights_only=False)
+        elif graph_path.endswith('.pkl'):
+            with open(graph_path, 'rb') as f:
+                self.graphs = pickle.load(f)
+        else:
+            raise ValueError(f"Format de fichier non supporté: {graph_path}. Utilisez .pt ou .pkl")
+        
         self.emb_dict = emb_dict
         self.ids = [g.id for g in self.graphs]
         self.encode_feat = encode_feat
@@ -184,10 +193,27 @@ class PreprocessedGraphDataset(Dataset):
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]
-            
             return graph, text_emb
         else:
             return graph, graph.smiles, graph.description
+
+
+def load_data(file_path: str):
+    """
+    Charge les données depuis .pkl ou .pt automatiquement.
+    """
+    print(f"Loading data from: {file_path}")
+    
+    if file_path.endswith('.pt'):
+        data = torch.load(file_path, weights_only=False)
+    elif file_path.endswith('.pkl'):
+        with open(file_path, 'rb') as f:
+            data = pickle.load(f)
+    else:
+        raise ValueError(f"Format non supporté: {file_path}")
+    
+    print(f"Loaded {len(data)} samples")
+    return data
 
 
 def collate_fn(batch):

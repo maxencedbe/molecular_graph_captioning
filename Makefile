@@ -1,5 +1,6 @@
 PYTHON_VERSION := 3.11
 VENV  := .venv
+PYTHON_EXEC = python3
 
 .PHONY: env data_process test_model train infer
 
