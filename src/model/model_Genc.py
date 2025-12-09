@@ -134,7 +134,7 @@ class GEncoder(nn.Module):
         
         h_graph = torch.sum(z_graph * alpha * mask.unsqueeze(-1), dim=1) 
         
-        z_graph = self.projection_head(h_graph)
+        z_graph_pool = self.projection_head(h_graph)
 
-        return z_graph
+        return z_graph_pool, z_graph, mask
 

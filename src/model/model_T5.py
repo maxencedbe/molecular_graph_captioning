@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 from src.model.model_Genc import GEncoder, GEncParams
 from transformers import T5ForConditionalGeneration, T5Tokenizer
+from torch_geometric.utils import to_dense_batch
 
 enc_params = GEncParams()
 class GraphCapT5(nn.Module):
-    def __init__(self, model_name="laituan245/molt5-large-smiles2caption", 
+    def __init__(self, model_name="laituan245/molt5-base", 
                  enc_params=enc_params, freeze_encoder=True, freeze_decoder=True):
         """
         faudra qu'on fasse des type scripts plus tard
@@ -14,13 +15,19 @@ class GraphCapT5(nn.Module):
         
         self.t5_model = T5ForConditionalGeneration.from_pretrained(model_name)
         self.tokenizer = T5Tokenizer.from_pretrained(model_name)
-        
-        self.hidden_size = self.t5_model.config.d_model  
+        self.hidden_size = self.t5_model.config.d_model        
         
         self.gnn_encoder = GEncoder(params=enc_params)
         
+        self.graph_projection_pool = nn.Sequential(
+            nn.Linear(enc_params.projection_dim, self.hidden_size),
+            nn.LayerNorm(self.hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.1)
+        )
+    
         self.graph_projection = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.Linear(enc_params.hidden_dim, self.hidden_size),
             nn.LayerNorm(self.hidden_size),
             nn.GELU(),
             nn.Dropout(0.1)
@@ -40,8 +47,10 @@ class GraphCapT5(nn.Module):
 
         batch_size = mol_data.batch.max().item() + 1
         
-        H_graph, graph_mask = self.gnn_encoder(mol_data)  # [B, max_nodes, hidden_size]
+        H_graph_pool, H_graph, graph_mask = self.gnn_encoder(mol_data) 
+        H_graph_pool = self.graph_projection_pool(H_graph_pool).unsqueeze(1)
         H_graph = self.graph_projection(H_graph)
+
         
         if isinstance(smiles_text, str):
             smiles_text = [smiles_text] * batch_size
@@ -72,11 +81,13 @@ class GraphCapT5(nn.Module):
             input_ids=prompt_inputs['input_ids'],
             attention_mask=prompt_inputs['attention_mask']
         )
-        H_prompt = prompt_encoder_outputs.last_hidden_stat  # [1, prompt_len, hidden_size]
+        H_prompt = prompt_encoder_outputs.last_hidden_state  # [1, prompt_len, hidden_size]
         H_prompt = H_prompt.expand(batch_size, -1, -1)  # [B, prompt_len, hidden_size]
         
-        combined_encoder_hidden = torch.cat([H_graph, H_smiles], dim=1)
+        graph_pool_mask = torch.ones(batch_size, H_graph_pool.size(1), dtype=torch.float32, device=H_graph.device)
+        combined_encoder_hidden = torch.cat([H_graph_pool, H_graph, H_smiles], dim=1)
         combined_attention_mask = torch.cat([
+            graph_pool_mask,
             graph_mask.float(),
             smiles_inputs['attention_mask'].float()
         ], dim=1)
@@ -103,7 +114,7 @@ class GraphCapT5(nn.Module):
                     last_hidden_state=combined_encoder_hidden
                 ),
                 attention_mask=combined_attention_mask,
-                max_length=150,
+                max_length=512,
                 num_beams=5,
                 early_stopping=True,
                 no_repeat_ngram_size=2

@@ -9,18 +9,20 @@ from src.data.data_process import load_data, PreprocessedGraphDataset, collate_f
 from torch.utils.data import DataLoader
 from src.model.model_T5 import GraphCapT5
 
+from torch.cuda.amp import autocast
+from torch.amp import GradScaler
 
 epochs = 50
 batch_size = 32 
 learning_rate = 5e-5  
 weight_decay = 1e-5
-val_freq = 5
-save_freq = 10
+val_freq = 3
+save_freq = 5
 max_length = 512  
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train_epoch(model, dataloader, optimizer, tokenizer, device, epoch):
+def train_epoch(model, dataloader, optimizer, tokenizer, scaler, device, epoch):
     model.train()
     total_loss = 0
     num_samples_processed = 0
@@ -40,8 +42,8 @@ def train_epoch(model, dataloader, optimizer, tokenizer, device, epoch):
         labels = {k: v.to(device) for k, v in labels.items()}
         
         optimizer.zero_grad()
-
-        loss = model(batch_graph, batch_smiles, labels=labels, return_loss=True)        
+        
+        loss = model(batch_graph, batch_smiles, labels=labels, return_loss=True) 
         loss.backward()
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -64,7 +66,7 @@ def train_epoch(model, dataloader, optimizer, tokenizer, device, epoch):
     return avg_loss
 
 
-def validate_epoch(model, dataloader, val_data_list, evaluator, tokenizer, device):
+def validate_epoch(model, dataloader, val_data_list, evaluator, tokenizer, scaler, device):
     model.eval()
     total_loss = 0
     all_predictions = []
@@ -86,7 +88,7 @@ def validate_epoch(model, dataloader, val_data_list, evaluator, tokenizer, devic
                 return_tensors='pt'
             )
             labels = {k: v.to(device) for k, v in labels.items()}
-            
+
             loss = model(batch_graph, batch_smiles, labels=labels, return_loss=True)
             total_loss += loss.item() * batch_size
             
@@ -128,7 +130,7 @@ def main():
     print("Loading data and model...")
     from transformers import T5Tokenizer
 
-    tokenizer = T5Tokenizer.from_pretrained("laituan245/molt5-large-smiles2caption", model_max_length=512)
+    tokenizer = T5Tokenizer.from_pretrained("laituan245/molt5-base", model_max_length=512)
     tokenizer.pad_token = tokenizer.eos_token
 
     train_data_list = load_data(train_data_file)
@@ -143,29 +145,36 @@ def main():
         shuffle=True, 
         collate_fn=collate_fn
     )
+    from torch.utils.data import Subset
+    subset_size = 250
+    val_subset = Subset(val_dataset, range(subset_size))
+
     val_loader = DataLoader(
-        val_dataset, 
+        val_subset, 
         batch_size=batch_size, 
         shuffle=False, 
         collate_fn=collate_fn
     )
 
     model = GraphCapT5(
-        model_name="laituan245/molt5-large-smiles2caption",
+        model_name="laituan245/molt5-base",
         freeze_encoder=True,  
         freeze_decoder=True   
     ).to(device)
     
+    checkoint = torch.load("src/saved_model/best_model_genc.pth", map_location=device)
+    model.load_state_dict(checkoint, strict=False)
 
+    scaler = GradScaler()
     optimizer = optim.AdamW([
-        {'params': model.gnn_encoder.parameters(), 'lr': learning_rate},
+        {'params': model.gnn_encoder.parameters(), 'lr': learning_rate*0.01},
         {'params': model.graph_projection.parameters(), 'lr': learning_rate},
     ], weight_decay=weight_decay)
     
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     
     evaluator = MolecularCaptionEvaluator(device=device)
-
+    print(next(model.parameters()).dtype)
     wandb.watch(model, log="all", log_freq=100)
 
     best_score = 0.0
@@ -173,7 +182,7 @@ def main():
     print(f"Starting training on {device}...")
     
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, tokenizer, device, epoch)
+        train_loss = train_epoch(model, train_loader, optimizer, tokenizer, scaler, device, epoch)
         
         scheduler.step()
         
@@ -190,6 +199,7 @@ def main():
                 val_data_list,
                 evaluator,
                 tokenizer,
+                scaler,
                 device
             )
             
@@ -199,15 +209,15 @@ def main():
                 "val/loss": val_loss,
                 "val/composite_score": composite_score,
                 "val/bleu_f1": eval_results.get('bleu_f1_mean', 0),
-                "val/bert_f1": eval_results.get('rouge', 0),
+                "val/bert_f1": eval_results.get('bertscore_f1_mean', 0),
                 "epoch": epoch
             })
             
             if composite_score > best_score:
                 best_score = composite_score
                 os.makedirs("src/saved_model", exist_ok=True)
-                torch.save(model.state_dict(), "src/saved_model/best_model_gpt2.pth")
-                wandb.save("src/saved_model/best_model_gpt2.pth")
+                torch.save(model.state_dict(), "src/saved_model/best_model_t5.pth")
+                wandb.save("src/saved_model/best_model_t5.pth")
                 wandb.run.summary["best_score"] = best_score
                 print(f"✓ New best model saved! Score: {best_score:.4f}")
             
@@ -216,7 +226,7 @@ def main():
             print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f}")
             
         if (epoch+1) % save_freq == 0:
-            checkpoint_path = f"src/saved_model/model_gpt2_epoch_{epoch+1}.pth"
+            checkpoint_path = f"src/saved_model/model_t5_epoch_{epoch+1}.pth"
             os.makedirs("src/saved_model", exist_ok=True)
             torch.save({
                 'epoch': epoch,
