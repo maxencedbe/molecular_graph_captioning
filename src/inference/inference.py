@@ -3,7 +3,7 @@ import pandas as pd
 
 from src.utils import retrieve_captioning
 from src.data.data_process import load_data, embdict_to_tensor, load_id2emb, PreprocessedGraphDataset, collate_fn
-from src.model.model import GEncoder,GraphT5_GINEncoder
+from src.model.model_gat import GEncoder
 from torch.utils.data import DataLoader
 
 model_path = "src/saved_model/best_model.pth"
@@ -22,7 +22,7 @@ def main():
     all_pred_captions = []
 
     train_data_file = "src/data/train_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings.csv"
+    train_emb_csv = "src/data/train_embeddings_bge.csv"
 
     train_emb = load_id2emb(train_emb_csv)
     train_data = load_data(train_data_file)
@@ -34,7 +34,7 @@ def main():
     with torch.no_grad():
         for batch_graph in test_loader:
             batch_graph = batch_graph.to(device)
-            z_graph = model(batch_graph)
+            z_graph, _, _ = model(batch_graph)
 
             text_id = retrieve_captioning(z_graph, train_caption_tensor.to(device))
             pred_caption = [train_data[i].description for i in text_id.cpu().numpy()]

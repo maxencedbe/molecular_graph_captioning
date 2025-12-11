@@ -6,14 +6,13 @@ import torch.optim as optim
 import torch.nn.functional as F
 from transformers import get_linear_schedule_with_warmup  # Import ajouté
 
-from src.utils import contrastive_loss,contrastive_cosface_loss, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model import GraphT5_GINEncoder, node_feat_dim, hidden_dim
 from src.model.model_gat import GEncoder
 
-epochs = 50
-batch_size = 64
+epochs = 200
+batch_size = 256
 learning_rate = 5e-5
 weight_decay = 1e-5
 val_freq = 5
@@ -33,7 +32,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
 
         optimizer.zero_grad()
 
-        z_graph,_,_ = model(batch_graph)
+        z_graph, _, _ = model(batch_graph)
         loss = contrastive_loss(z_graph, batch_text_emb)
 
         loss.backward()

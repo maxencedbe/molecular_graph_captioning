@@ -8,3 +8,4 @@ __pycache__/
 *.csv
 wandb/
 saved_model/
+src/data/checkpoint-8000/
