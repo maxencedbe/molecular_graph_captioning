@@ -5,10 +5,6 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch
 
-#def load_data(file_path: str) -> List[Batch]:
-#    with open(file_path, 'rb') as f:
-#        graphs = pickle.load(f)
-#    return graphs
 
 # =========================================================
 # Feature maps for atom and bond attributes
@@ -181,9 +177,25 @@ class PreprocessedGraphDataset(Dataset):
             raise ValueError(f"Format de fichier non supporté: {graph_path}. Utilisez .pt ou .pkl")
         
         self.emb_dict = emb_dict
-        self.ids = [g.id for g in self.graphs]
         self.encode_feat = encode_feat
+        
+        # Extrait les IDs, gère les graphes sans attribut .id
+        self.ids = []
+        for i, g in enumerate(self.graphs):
+            if hasattr(g, 'id'):
+                self.ids.append(g.id)
+            else:
+                # Si pas d'ID, utilise l'index comme ID
+                self.ids.append(str(i))
+        
         print(f"Loaded {len(self.graphs)} graphs")
+        
+        # Vérifie si tous les graphes ont un ID quand emb_dict est fourni
+        if self.emb_dict is not None:
+            graphs_with_id = sum(1 for g in self.graphs if hasattr(g, 'id'))
+            if graphs_with_id < len(self.graphs):
+                print(f"⚠️  Attention: {len(self.graphs) - graphs_with_id} graphes sans attribut .id")
+                print(f"   Ces graphes ne pourront pas être associés à des embeddings de texte")
 
     def __len__(self):
         return len(self.graphs)
@@ -191,9 +203,20 @@ class PreprocessedGraphDataset(Dataset):
     def __getitem__(self, idx):
         graph = self.graphs[idx]
         if self.emb_dict is not None:
-            id_ = graph.id
-            text_emb = self.emb_dict[id_]
-            return graph, text_emb
+            # Essaie d'abord avec .id, sinon utilise l'index
+            if hasattr(graph, 'id'):
+                id_ = graph.id
+            else:
+                id_ = str(idx)
+            
+            # Si l'ID n'existe pas dans emb_dict, retourne sans embedding
+            if id_ in self.emb_dict:
+                text_emb = self.emb_dict[id_]
+                return graph, text_emb
+            else:
+                # Graphe sans embedding (ex: PubChem) - retourne None ou un embedding zero
+                # Pour l'entraînement, on peut soit les ignorer soit utiliser un embedding vide
+                return graph, None
         else:
             return graph, graph.smiles, graph.description
 
@@ -233,3 +256,39 @@ def collate_fn(batch):
         return batch_graph,text_embs
     else : 
         return batch_graph,out[1],out[2]
+
+
+def collate_fn_infer(batch):
+    """
+    Collate function for DataLoader to batch graphs with optional text embeddings.
+    
+    Args:
+        batch: List of graph Data objects or (graph, text_embedding) tuples
+        
+    Returns:
+        Batched graph or (batched_graph, stacked_text_embeddings)
+    """
+    out = list(zip(*batch))
+    batch_graph = Batch.from_data_list(out[0])
+
+    return batch_graph,out[1]
+
+def collate_fn_with_filter(batch):
+    """
+    Collate function qui filtre les échantillons sans embedding.
+    Utilise cette version si tu veux ignorer les graphes PubChem pendant l'entraînement.
+    """
+    # Filtre les None
+    batch = [(g, emb) for g, emb in batch if emb is not None]
+    
+    if len(batch) == 0:
+        return None, None
+    
+    graphs, embeddings = zip(*batch)
+    
+    # Ton collate_fn normal ici
+    from torch_geometric.data import Batch
+    batched_graphs = Batch.from_data_list(list(graphs))
+    batched_embeddings = torch.stack(embeddings)
+    
+    return batched_graphs, batched_embeddings
