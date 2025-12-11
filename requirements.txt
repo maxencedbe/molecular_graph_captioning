@@ -1,8 +1,12 @@
 torch>=2.0.0
 torch-geometric>=2.3.0
+setuptools>=65.0.0
 pandas>=1.5.0
 transformers>=4.30.0
 tqdm>=4.65.0
 rdkit>=2023.3.1
 nltk>=3.8.0
 wandb
+FlagEmbedding
+git+https://github.com/GAD-cell/muon-clip.git@main
+FlagEmbedding[finetune]

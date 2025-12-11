@@ -9,8 +9,8 @@ from transformers import get_linear_schedule_with_warmup  # Import ajouté
 from src.utils import contrastive_loss,contrastive_cosface_loss, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model import GEncoder, GraphT5_GINEncoder, node_feat_dim, hidden_dim
-
+from src.model.model import GraphT5_GINEncoder, node_feat_dim, hidden_dim
+from src.model.model_gat import GEncoder
 
 epochs = 50
 batch_size = 64
@@ -33,7 +33,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
 
         optimizer.zero_grad()
 
-        z_graph = model(batch_graph)
+        z_graph,_,_ = model(batch_graph)
         loss = contrastive_loss(z_graph, batch_text_emb)
 
         loss.backward()
@@ -71,7 +71,7 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
             batch_graph = batch_graph.to(device)
             batch_text_emb = batch_text_emb.to(device)
 
-            z_graph = model(batch_graph)
+            z_graph,_,_ = model(batch_graph)
 
             loss = contrastive_loss(z_graph, batch_text_emb)
             total_loss += loss.item() * batch_graph.num_graphs
@@ -102,8 +102,8 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 def main():
     train_data_file = "src/data/train_graphs.pkl"
     val_data_file = "src/data/validation_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings.csv"
-    val_emb_csv   = "src/data/validation_embeddings.csv"
+    train_emb_csv = "src/data/train_embeddings_bge.csv"
+    val_emb_csv   = "src/data/validation_embeddings_bge.csv"
 
     wandb.init(
         project="molecular-captioning",
@@ -132,10 +132,17 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder(in_dim=node_feat_dim, hidden_dim=hidden_dim).to(device)
-    #model = MolGNN().to(device)
+    model = GEncoder().to(device)
     #model = GraphT5_GINEncoder().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    from muon import MuonClip, MuonConfig
+    muon_config = MuonConfig(enable_clipping=False,
+                            lr=learning_rate,
+                            muon_decay=weight_decay,
+                            log_max_logits=False,
+                            log_dir='')
+    
+    optimizer = MuonClip(model,{}, muon_config)
 
     total_steps = len(train_loader) * epochs
     num_warmup_steps = int(0.1 * total_steps) 

@@ -18,61 +18,7 @@ def contrastive_loss(z_graph, z_text, temp=0.07):
 import torch
 import torch.nn.functional as F
 
-def contrastive_cosface_loss(z_graph, z_text, margin=0.3, temperature=0.07):
-    """
-    Calcule la Loss Contrastive avec Marge Additive (CosFace) pour l'alignement Graphe-Texte.
 
-    Args:
-        z_graph (Tensor): Embeddings des graphes [B, H].
-        z_text (Tensor): Embeddings du texte (positifs) [B, H].
-        margin (float): Marge additive (m) pour CosFace (ex: 0.3).
-        temperature (float): Température (tau) pour la mise à l'échelle.
-        
-    Returns:
-        Tensor: La Loss CosFace moyenne.
-    """
-    
-    # 1. Normalisation (Obligatoire pour Cosine Loss)
-    # CosFace/ArcFace travaille sur la surface de l'hypersphère (vecteurs normalisés).
-    z_graph = F.normalize(z_graph, dim=1)
-    z_text = F.normalize(z_text, dim=1)
-    
-    # 2. Calcul des Similarités Cosinus (Matrice B x B)
-    # S[i, j] = cos(theta_i,j)
-    similarity_matrix = torch.matmul(z_graph, z_text.T)
-    
-    # 3. Application de la Marge Additive (CosFace)
-    # On applique la marge uniquement à la paire POSITIVE (i=j)
-    
-    # Masque des positifs (diagonale)
-    positive_mask = torch.eye(similarity_matrix.size(0), dtype=torch.bool, device=z_graph.device)
-    
-    # S+ = cos(theta_i,i) - m
-    positive_similarity_margined = similarity_matrix[positive_mask] - margin
-    
-    # S- = cos(theta_i,j) (pas de marge pour les négatifs)
-    negative_similarity = similarity_matrix[~positive_mask].view(similarity_matrix.size(0), -1)
-    
-    # 4. Préparation pour Softmax (log-sum-exp)
-    # Construction de la matrice finale des logits (Sim x T)
-    
-    # On insère les positifs margés dans la matrice des négatifs
-    logits = torch.cat([
-        positive_similarity_margined.unsqueeze(1), # Colonne des positifs
-        negative_similarity                        # Colonnes des négatifs
-    ], dim=1)
-    
-    # Application du facteur d'échelle (tau)
-    logits = logits / temperature 
-    
-    # 5. Calcul de la Loss (Cross-Entropy/InfoNCE)
-    # L'indice cible est 0, car la colonne des positifs est la première (index 0).
-    labels = torch.zeros(logits.size(0), dtype=torch.long, device=z_graph.device)
-    
-    # On utilise F.cross_entropy pour calculer la Loss InfoNCE
-    loss = F.cross_entropy(logits, labels)
-    
-    return loss
 def retrieve_captioning(batch_z_graph, batch_text_emb):
     batch_z_graph = F.normalize(batch_z_graph, p=2, dim=1)
     batch_text_emb = F.normalize(batch_text_emb, p=2, dim=1)
@@ -80,6 +26,12 @@ def retrieve_captioning(batch_z_graph, batch_text_emb):
     text_id = similarities.argmax(dim=-1)
     return text_id #(batch_size,)
 
+def retrieve_captioning_topk(batch_z_graph, batch_text_emb, top_k=50):
+    batch_z_graph = F.normalize(batch_z_graph, p=2, dim=1)
+    batch_text_emb = F.normalize(batch_text_emb, p=2, dim=1)
+    similarities = batch_z_graph @ batch_text_emb.T
+    topk_text_id = similarities.topk(k=top_k, dim=-1).indices
+    return topk_text_id #(batch_size, top_k)
 
 class MolecularCaptionEvaluator:
     BERT_MODEL_NAME = "seyonec/ChemBERTa-zinc-base-v1"

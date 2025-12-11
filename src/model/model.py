@@ -10,7 +10,7 @@ import torch.nn.functional as F
 node_feat_dim = 177
 edge_feat_dim = 30
 hidden_dim = 512
-projection_dim = 768
+projection_dim = 1024
 hiddden_dim_n = 512
 hidden_dim_e = 128
 import torch.nn as nn
@@ -72,7 +72,7 @@ class MessagePassing(MessagePassing):
 
 
 
-#from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.conv import MessagePassing
 class AttMessagePassing(MessagePassing):
     def __init__(self, in_channels, out_channels, dropout=0.1, num_heads=4, alpha=0.05):
         super(AttMessagePassing, self).__init__(aggr='add', flow='source_to_target')
@@ -153,7 +153,7 @@ class GEncoder(nn.Module):
         self.input_proj = AtomEncoder()
             
         for i in range(num_layers):
-            self.layers.append(MessagePassing(hidden_dim, hidden_dim, dropout=dropout))
+            self.layers.append(AttMessagePassing(hidden_dim, hidden_dim, dropout=dropout))
             self.norms.append(nn.RMSNorm(hidden_dim))
             self.ffn.append(nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
@@ -250,7 +250,7 @@ class GraphT5_GINEncoder(nn.Module):
     Five-layered GIN graph encoder from GraphT5
     """
     def __init__(self, node_feat_dim=177, edge_feat_dim=128, hidden_dim=512, 
-                 output_dim=768, num_layers=10):
+                 output_dim=1024, num_layers=6):
         """
         Args:
             node_feat_dim: dimension des features des atomes (ex: 119 pour atom types)
@@ -279,7 +279,7 @@ class GraphT5_GINEncoder(nn.Module):
             for _ in range(num_layers)
         ])
 
-        self.gap_proj = nn.Linear(768, hidden_dim)
+        self.gap_proj = nn.Linear(1024, hidden_dim)
         self.projection_head = nn.Linear(output_dim, output_dim)
         self.att_vec = nn.Linear(hidden_dim, 1)
         self.softmax = nn.Softmax(dim=1) 

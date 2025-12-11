@@ -47,3 +47,8 @@ add_smiles:
 	@echo "Adding smiles to data..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/add_smiles.py
 	@echo "Inference complete."
+
+top_k:
+	@echo "Generating top k hard negatives..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/data/tryhard.py
+	@echo "Inference complete."
