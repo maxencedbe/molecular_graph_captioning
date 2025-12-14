@@ -5,7 +5,7 @@ from torch_geometric.nn import global_add_pool
 from torch_geometric.utils import softmax
 from torch_geometric.utils import to_dense_batch
 import torch.nn.functional as F
-
+from FlagEmbedding import FlagModel
 
 
 class GEncParams:
@@ -17,6 +17,8 @@ class GEncParams:
     hidden_dim = 512
     hidden_dim_n = 512
     hidden_dim_e = 128
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 params = GEncParams()
 
@@ -150,3 +152,23 @@ class GEncoder(nn.Module):
         z_graph_pool = self.projection_head(h_graph)
 
         return z_graph_pool, x_dense, mask
+    
+
+class DualEncoder(nn.Module):
+    def __init__(self, params=params):
+        super(DualEncoder, self).__init__()
+        self.device = params.device
+        self.text_enc = FlagModel(
+                "BAAI/bge-large-en-v1.5", 
+                query_instruction_for_retrieval="Represent this sentence for searching relevant passages:",
+                use_fp16=True, 
+                device=str(params.device))
+        
+        self.graph_enc = GEncoder()
+
+    def forward(self, data, descriptions):
+        text_emb = self.text_enc.encode(descriptions)
+        text_emb = torch.from_numpy(text_emb).float().to(self.device)
+        graph_emb,_,_ = self.graph_enc(data)
+
+        return graph_emb,text_emb

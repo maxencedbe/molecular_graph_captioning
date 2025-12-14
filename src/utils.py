@@ -14,6 +14,36 @@ def contrastive_loss(z_graph, z_text, temp=0.07):
     
     return F.cross_entropy(sim, target)
 
+def contrastive_loss_bidirectional(z_graph, z_text, temp=0.07):
+    """
+    Contrastive loss dans les deux sens (graph->text et text->graph)
+    """
+    z_graph = F.normalize(z_graph, p=2, dim=1)
+    z_text = F.normalize(z_text, p=2, dim=1)
+
+    sim = torch.matmul(z_graph, z_text.T) / temp
+    
+    target = torch.arange(z_graph.size(0), device=z_graph.device)
+    
+    loss_g2t = F.cross_entropy(sim, target)      
+    loss_t2g = F.cross_entropy(sim.T, target)    
+
+    return (loss_g2t + loss_t2g) / 2 
+
+import tqdm
+def generate_emb(model,data):
+    descriptions = [] 
+    for graph in tqdm(data, desc="Extraction des descriptions", total=len(data)):
+        descriptions.append(getattr(graph, 'descriptions', '')) 
+
+    embeddings_array = model.encode(
+        descriptions, 
+        batch_size=32,
+        max_length=512, 
+    )
+
+    return embeddings_array
+
 
 import torch
 import torch.nn.functional as F

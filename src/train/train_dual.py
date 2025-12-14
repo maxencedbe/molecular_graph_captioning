@@ -4,36 +4,42 @@ import wandb
 import os
 import torch.optim as optim
 import torch.nn.functional as F
-from transformers import get_linear_schedule_with_warmup  
+from transformers import get_linear_schedule_with_warmup
 
-from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import generate_emb, contrastive_loss_bidirectional, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model_gat import GEncoder
+from src.model.model_gat import DualEncoder
+import torch.nn as nn
 
 epochs = 200
-batch_size = 256
+batch_size = 32
 learning_rate = 5e-5
 weight_decay = 1e-5
-val_freq = 5
+val_freq = 10
 save_freq = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def train_epoch(model, dataloader, optimizer, scheduler, device, epoch): 
     model.train()
+    model.graph_enc.train()  
+    
     total_loss = 0
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
     
     for batch_idx, (batch_graph, batch_text_emb) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
-        batch_text_emb = batch_text_emb.to(device)
+        
+        individual_graphs = batch_graph.to_data_list()
+        descriptions = [graph.description for graph in individual_graphs]
 
         optimizer.zero_grad()
 
-        z_graph, _, _ = model(batch_graph)
-        loss = contrastive_loss(z_graph, batch_text_emb)
+        z_graph, z_text = model(batch_graph, descriptions)
+        
+        loss = contrastive_loss_bidirectional(z_graph, z_text)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -59,6 +65,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
 
 def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluator, device):
     model.eval()
+    model.graph_enc.eval()
+    
     total_loss = 0
     total_score = 0
     total_bleu = 0
@@ -68,19 +76,20 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
     with torch.no_grad():
         for batch_graph, batch_text_emb in progress_bar:
             batch_graph = batch_graph.to(device)
-            batch_text_emb = batch_text_emb.to(device)
-
-            z_graph,_,_ = model(batch_graph)
-
-            loss = contrastive_loss(z_graph, batch_text_emb)
-            total_loss += loss.item() * batch_graph.num_graphs
-
-            text_id = retrieve_captioning(z_graph, val_caption_tensor)
-            
-            pred_caption = [val_data_list[i].description for i in text_id.cpu().numpy()]
             
             individual_graphs = batch_graph.to_data_list()
-            true_caption = [graph.description for graph in individual_graphs]
+            descriptions = [graph.description for graph in individual_graphs]
+
+            z_graph, z_text = model(batch_graph, descriptions)
+
+            loss = contrastive_loss_bidirectional(z_graph, z_text)
+            total_loss += loss.item() * batch_graph.num_graphs
+
+            emb_array = generate_emb(model.text_enc,val_data_list)
+            caption_tensor = torch.stack(emb_array)
+            text_id = retrieve_captioning(z_graph, caption_tensor)
+            pred_caption = [val_data_list[i].description for i in text_id.cpu().numpy()]
+            true_caption = descriptions
             
             score = evaluator.evaluate_batch(pred_caption, true_caption)
             
@@ -92,7 +101,10 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
                 v_loss=f'{total_loss / len(dataloader.dataset):.4f}', 
                 v_score=f'{total_score / len(dataloader.dataset):.4f}'
             )
-    print(f"Validation BLEU-4 F1: {total_bleu / len(dataloader.dataset):.4f}, BERTScore F1: {total_bert / len(dataloader.dataset):.4f}")
+    
+    print(f"Validation BLEU-4 F1: {total_bleu / len(dataloader.dataset):.4f}, "
+          f"BERTScore F1: {total_bert / len(dataloader.dataset):.4f}")
+    
     avg_loss = total_loss / len(dataloader.dataset)
     avg_score = total_score / len(dataloader.dataset)
     return avg_loss, avg_score
@@ -101,23 +113,22 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 def main():
     train_data_file = "src/data/train_graphs.pkl"
     val_data_file = "src/data/validation_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings_bge.csv"
-    val_emb_csv   = "src/data/validation_embeddings_bge.csv"
+    train_emb_csv = "src/data/train_embeddings.csv"
+    val_emb_csv = "src/data/validation_embeddings.csv"
 
     wandb.init(
-        project="molecular-captioning",
+        project="molecular-captioning-dual",
         config={
             "epochs": epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
-            "architecture": "GEncoder",
+            "architecture": "DualEncoder (GEncoder + BGE)",
             "device": str(device)
         }
     )
 
     print("Loading data...")
-
     train_emb = load_id2emb(train_emb_csv)
     val_emb = load_id2emb(val_emb_csv)
     train_data = load_data(train_data_file)
@@ -131,30 +142,27 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder().to(device)
-    #model = GraphT5_GINEncoder().to(device)
-    #optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    from muon import MuonClip, MuonConfig
-    muon_config = MuonConfig(enable_clipping=False,
-                            lr=learning_rate,
-                            muon_decay=weight_decay,
-                            log_max_logits=False,
-                            log_dir='')
+    model = DualEncoder().to(device)
     
-    optimizer = MuonClip(model,{}, muon_config)
+    from muon import MuonClip, MuonConfig
+    muon_config = MuonConfig(
+        enable_clipping=False,
+        lr=learning_rate,
+        muon_decay=weight_decay,
+        log_max_logits=False,
+        log_dir=''
+    )
+    optimizer = MuonClip(model, {}, muon_config)
 
     total_steps = len(train_loader) * epochs
-    num_warmup_steps = int(0.1 * total_steps) 
-    
+    num_warmup_steps = int(0.1 * total_steps)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, 
         num_warmup_steps=num_warmup_steps, 
         num_training_steps=total_steps
     )
-    # -------------------------------
 
     evaluator = MolecularCaptionEvaluator(device=device)
-
     wandb.watch(model, log="all", log_freq=100)
 
     best_score = 0.0
@@ -185,20 +193,22 @@ def main():
             
             if score > best_score:
                 best_score = score
-                torch.save(model.state_dict(), "src/saved_model/best_model.pth")
-                wandb.save("src/saved_model/best_model.pth")
+                torch.save(model.state_dict(), "src/saved_model/best_dual_encoder.pth")
+                wandb.save("src/saved_model/best_dual_encoder.pth")
                 wandb.run.summary["best_score"] = best_score
             
-            print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Score: {score:.4f}")
+            print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, "
+                  f"Val Loss: {val_loss:.4f}, Score: {score:.4f}")
         else:
             print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}")
             
         if (epoch+1) % save_freq == 0:
-            checkpoint_path = f"src/saved_model/model_epoch_{epoch}.pth"
+            checkpoint_path = f"src/saved_model/dual_encoder_epoch_{epoch}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             wandb.save(checkpoint_path)
 
     wandb.finish()
+    print(f"Training completed! Best validation score: {best_score:.4f}")
 
 
 if __name__ == "__main__":

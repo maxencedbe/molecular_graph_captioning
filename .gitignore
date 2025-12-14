@@ -9,3 +9,4 @@ __pycache__/
 wandb/
 saved_model/
 src/data/checkpoint-8000/
+/runs/

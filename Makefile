@@ -38,6 +38,11 @@ train:
 	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
 	@echo "Model training complete."
 
+train_dual:
+	@echo "Training model..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_dual.py
+	@echo "Model training complete."
+
 infer:
 	@echo "Running inference..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
