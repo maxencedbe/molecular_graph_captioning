@@ -4,23 +4,24 @@ import wandb
 import os
 import torch.optim as optim
 import torch.nn.functional as F
-from transformers import get_linear_schedule_with_warmup  
+from transformers import get_linear_schedule_with_warmup , get_constant_schedule_with_warmup 
 
-from src.utils import contrastive_loss, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import contrastive_loss, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
 from src.model.model_gat import GEncoder
 
 epochs = 200
 batch_size = 256
-learning_rate = 5e-5
+learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, device, epoch): 
+
+def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, device, epoch): 
     model.train()
     total_loss = 0
     num_samples_processed = 0
@@ -33,7 +34,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
         optimizer.zero_grad()
 
         z_graph, _, _ = model(batch_graph)
-        loss = contrastive_loss(z_graph, batch_text_emb)
+        loss = contrastive_loss_sampling(z_graph, batch_text_emb, batch_idx, train_caption_tensor, batch_size=256)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -123,7 +124,7 @@ def main():
     train_data = load_data(train_data_file)
     val_data_list = load_data(val_data_file)
 
-    val_caption_tensor = embdict_to_tensor(train_emb).to(device)
+    train_caption_tensor = embdict_to_tensor(train_emb).to(device)
 
     train_dataset = PreprocessedGraphDataset(train_data_file, train_emb, encode_feat=True)
     val_dataset = PreprocessedGraphDataset(val_data_file, val_emb, encode_feat=True)
@@ -144,12 +145,12 @@ def main():
     optimizer = MuonClip(model,{}, muon_config)
 
     total_steps = len(train_loader) * epochs
-    num_warmup_steps = int(0.1 * total_steps) 
+    num_warmup_steps = int(0.01 * total_steps) 
     
-    scheduler = get_linear_schedule_with_warmup(
+    scheduler = get_constant_schedule_with_warmup(
         optimizer, 
         num_warmup_steps=num_warmup_steps, 
-        num_training_steps=total_steps
+        #num_training_steps=total_steps
     )
     # -------------------------------
 
@@ -160,7 +161,7 @@ def main():
     best_score = 0.0
     
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, scheduler, device, epoch)
+        train_loss = train_epoch(model, train_loader, train_caption_tensor, optimizer, scheduler, device, epoch)
         
         wandb.log({
             "train/epoch_loss": train_loss,
@@ -171,7 +172,7 @@ def main():
             val_loss, score = validate_epoch(
                 model, 
                 val_loader, 
-                val_caption_tensor, 
+                train_caption_tensor, 
                 train_data,
                 evaluator,
                 device

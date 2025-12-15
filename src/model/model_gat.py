@@ -172,3 +172,96 @@ class DualEncoder(nn.Module):
         graph_emb,_,_ = self.graph_enc(data)
 
         return graph_emb,text_emb
+
+
+
+'''
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GINEConv
+from torch_geometric.utils import to_dense_batch
+
+class GINEBlock(nn.Module):
+    def __init__(self, hidden_dim, dropout=0.1):
+        super(GINEBlock, self).__init__()
+        
+        # Le cœur du GIN est un MLP qui transforme la SOMME des voisins
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.BatchNorm1d(hidden_dim * 2), # BatchNorm est souvent préféré pour GIN
+            nn.ReLU(),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+        )
+        
+        # GINEConv : GIN qui accepte des edge_attr
+        self.conv = GINEConv(self.mlp, train_eps=True) # train_eps=True permet au modèle d'apprendre le poids du nœud central
+        
+        self.norm = nn.BatchNorm1d(hidden_dim) # GIN marche souvent mieux avec BatchNorm que RMSNorm
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, edge_index, edge_attr):
+        x_in = x
+        
+        # GINEConv fait : MLP( (1+eps)*x + sum(relu(edge_attr + x_neighbors)) )
+        x = self.conv(x, edge_index, edge_attr=edge_attr)
+        
+        x = self.norm(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        
+        return x + x_in # Connexion résiduelle simple
+
+class GEncoder(nn.Module):
+    def __init__(self, num_layers=5, params=params, dropout=0.1):
+        super(GEncoder, self).__init__()
+        
+        self.input_proj = MolEncoder(params=params)
+        
+        # Il faut que les dimensions des edges matchent hidden_dim pour GINE
+        # Si MolEncoder sort des edges de taille différente, on ajoute une projection
+        self.edge_proj = nn.Linear(params.hidden_dim_e, params.hidden_dim)
+
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.layers.append(
+                GINEBlock(hidden_dim=params.hidden_dim, dropout=dropout)
+            )
+
+        # Pooling (On garde ton pooling Attention, il est très bien)
+        self.gap_proj = nn.Linear(params.hidden_dim, params.hidden_dim)
+        self.gap_act = nn.Tanh()
+        self.att_vec = nn.Linear(params.hidden_dim, 1)
+
+        # Projection Head
+        self.projection_head = nn.Sequential(
+            nn.Linear(params.hidden_dim, params.projection_dim),
+            nn.LayerNorm(params.projection_dim), # LayerNorm ici pour le contraste final
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(params.projection_dim, params.projection_dim)
+        )
+
+    def forward(self, data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+
+        x, edge_attr = self.input_proj(x, edge_attr)
+        
+        # Projection des edges pour qu'ils aient la même taille que X (requis pour GINE)
+        edge_attr = self.edge_proj(edge_attr)
+
+        for layer in self.layers:
+            x = layer(x, edge_index, edge_attr)
+
+        # --- Pooling Identique à avant ---
+        x_dense, mask = to_dense_batch(x, batch)
+        h_att = self.gap_act(self.gap_proj(x_dense))
+        att_scores = self.att_vec(h_att)
+        att_scores = att_scores.masked_fill(~mask.unsqueeze(-1), -1e9)
+        alpha = F.softmax(att_scores, dim=1)
+        h_graph = torch.sum(x_dense * alpha, dim=1) 
+        
+        z_graph_pool = self.projection_head(h_graph)
+
+        return z_graph_pool, x_dense, mask
+        '''
