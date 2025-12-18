@@ -48,12 +48,17 @@ infer:
 	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
 	@echo "Inference complete."
 
-add_smiles:
-	@echo "Adding smiles to data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/add_smiles.py
+add_selfies:
+	@echo "Adding selfies to data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/add_selfies.py
 	@echo "Inference complete."
+
+evaluate_train:
+	@echo "Evaluating on train data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/evaluate_train.py
+	@echo "Evaluation complete."
 
 top_k:
 	@echo "Generating top k hard negatives..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/data/tryhard.py
+	@PYTHONPATH=. $(PYTHON_EXEC) src/data/tryhard2.py
 	@echo "Inference complete."
