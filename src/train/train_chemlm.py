@@ -81,6 +81,11 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
         optimizer.step()
         scheduler.step()
 
+        if batch_idx % 1000 == 0:
+            checkpoint_path = f"src/saved_model/model_step_{batch_idx}.pth"
+            torch.save(model.state_dict(), checkpoint_path)
+            wandb.save(checkpoint_path)
+
         total_loss += loss.item()
         progress_bar.set_postfix(loss=f'{loss.item():.4f}')
 
