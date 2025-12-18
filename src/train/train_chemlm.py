@@ -12,12 +12,13 @@ from src.utils import MolecularCaptionEvaluator
 from torch_geometric.data import Batch
 from torch.optim import AdamW
 
-epochs = 200
-batch_size = 256
-learning_rate = 5e-4
+epochs = 1
+batch_size = 4
+learning_rate = 5e-5
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
+gradient_accumulation_steps = 1
 prompt = "\n Describe this molecule:"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -54,6 +55,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
     model.train()
     total_loss = 0
     progress_bar = tqdm.tqdm(dataloader, desc=f"Epoch {epoch}", leave=False)
+    accumulated_loss = 0
 
     for batch_idx, (batch_graph, input_ids, attention_mask) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
@@ -69,7 +71,11 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
         )
 
         loss = outputs.loss
-        loss.backward()
+        if batch_idx % gradient_accumulation_steps == 0:
+            accumulated_loss.backward()
+            accumulated_loss = 0
+        else : 
+            accumulated_loss += loss / gradient_accumulation_steps
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -173,7 +179,7 @@ def main():
 
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.AdamW(trainable_params, lr=1e-4, weight_decay=1e-5)
+    optimizer = optim.AdamW(trainable_params, lr=learning_rate, weight_decay=1e-5)
 
     total_steps = len(train_loader) * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=100, num_training_steps=total_steps)
