@@ -23,24 +23,15 @@ env:
 	@uv pip install -r requirements.txt --python $(UV_PYTHON_EXEC)
 	@echo "Evaluation environment ready."
 
-test_data:
-	@echo "Processing data..."
-	@$(PYTHON_EXEC) src/test_data.py
-	@echo "Data processing complete."
-
-test_model:
-	@echo "Testing model..."
-	@$(PYTHON_EXEC) src/test_model.py
-	@echo "Model testing complete."
 
 train:
 	@echo "Training model..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
 	@echo "Model training complete."
 
-train_dual:
+train_chemlm:
 	@echo "Training model..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_dual.py
+	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_chemlm.py
 	@echo "Model training complete."
 
 infer:
@@ -57,8 +48,3 @@ evaluate_train:
 	@echo "Evaluating on train data..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/evaluate_train.py
 	@echo "Evaluation complete."
-
-top_k:
-	@echo "Generating top k hard negatives..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/data/tryhard2.py
-	@echo "Inference complete."
