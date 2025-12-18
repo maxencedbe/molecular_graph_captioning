@@ -18,7 +18,7 @@ learning_rate = 5e-5
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
-gradient_accumulation_steps = 1
+gradient_accumulation_steps = 4
 prompt = "\n Describe this molecule:"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -55,14 +55,14 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
     model.train()
     total_loss = 0
     progress_bar = tqdm.tqdm(dataloader, desc=f"Epoch {epoch}", leave=False)
-    accumulated_loss = 0
+
+    optimizer.zero_grad()
 
     for batch_idx, (batch_graph, input_ids, attention_mask) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
         input_ids = input_ids.to(device)
         attention_mask = attention_mask.to(device)
 
-        optimizer.zero_grad()
         outputs = model(
             batch_graph=batch_graph,
             input_ids=input_ids,
@@ -70,26 +70,29 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch):
             labels=input_ids 
         )
 
-        loss = outputs.loss
-        if batch_idx % gradient_accumulation_steps == 0:
-            accumulated_loss.backward()
-            accumulated_loss = 0
-        else : 
-            accumulated_loss += loss / gradient_accumulation_steps
-        
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-        scheduler.step()
+        loss = outputs.loss / gradient_accumulation_steps
+        loss.backward()
+
+        total_loss += loss.item() * gradient_accumulation_steps
+
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            optimizer.zero_grad()
+
+        progress_bar.set_postfix({"loss": loss.item() * gradient_accumulation_steps})
+
+        wandb.log({
+            "train/batch_loss": loss.item() * gradient_accumulation_steps,
+            "train/learning_rate": scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr'],
+            "train/step": epoch * len(dataloader) + batch_idx
+        })
 
         if batch_idx % 1000 == 0:
             checkpoint_path = f"src/saved_model/model_step_{batch_idx}.pth"
             torch.save(model.state_dict(), checkpoint_path)
             wandb.save(checkpoint_path)
-
-        total_loss += loss.item()
-        progress_bar.set_postfix(loss=f'{loss.item():.4f}')
-
-        wandb.log({"train/batch_loss": loss.item(), "epoch": epoch})
 
     return total_loss / len(dataloader)
 
