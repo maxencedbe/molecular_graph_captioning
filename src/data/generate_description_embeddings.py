@@ -27,7 +27,7 @@ print(f"Model loaded on: {device}")
 
 try:
     print(f"Loading graphs from train_graphs.pkl...")
-    with open('train_graphs.pkl', 'rb') as f:
+    with open('train_graphs_selfies.pkl', 'rb') as f:
         graphs = pickle.load(f)
     print(f"Loaded {len(graphs)} graphs")
 except FileNotFoundError:
@@ -39,7 +39,7 @@ descriptions = []
 for graph in tqdm(graphs, desc="Extraction des descriptions", total=len(graphs)):
     # Assurer la robustesse en cas d'attribut manquant
     ids.append(getattr(graph, 'id', f'unknownid{len(ids)}')) 
-    descriptions.append(getattr(graph, 'description', '')) 
+    descriptions.append(getattr(graph, 'selfies', '')) 
 
 print("\nGenerating embeddings (BGE batch encoding)...")
 
@@ -55,7 +55,7 @@ result = pd.DataFrame({
     # Assurez-vous que l'objet est bien un array NumPy avant la conversion en chaîne
     'embedding': [','.join(map(str, emb)) for emb in embeddings_array] 
 })
-output_path = f'./train_embeddings_bge.csv' # Nom mis à jour pour BGE
+output_path = f'./train_embeddings_selfies.csv' # Nom mis à jour pour BGE
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 result.to_csv(output_path, index=False)
 print(f"\nSaved {len(embeddings_array)} embeddings to {output_path}")

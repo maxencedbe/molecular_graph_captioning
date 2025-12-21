@@ -1,12 +1,7 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.nn import global_add_pool
-from torch_geometric.utils import softmax
 from torch_geometric.utils import to_dense_batch
 import torch.nn.functional as F
-from FlagEmbedding import FlagModel
-
 
 class GEncParams:
     node_feat_dim = 177
@@ -35,40 +30,17 @@ class MolEncoder(nn.Module):
         self.atom_embeddings = nn.ModuleList([
             nn.Embedding(dim, hidden_dim_n) for dim in self.feat_dims
         ])
-        
-        self.atom_mixer = nn.Sequential(
-            nn.Linear(hidden_dim_n, hidden_dim_n * 2),
-            nn.LayerNorm(hidden_dim_n * 2),
-            nn.GELU(),
-            nn.Linear(hidden_dim_n * 2, hidden_dim_n),
-            nn.LayerNorm(hidden_dim_n)
-        )
 
         self.edge_embeddings = nn.ModuleList([
             nn.Embedding(dim, hidden_dim_e) for dim in self.edge_dims
         ])
-
-        self.edge_mixer = nn.Sequential(
-            nn.Linear(hidden_dim_e, hidden_dim_e * 2),
-            nn.LayerNorm(hidden_dim_e * 2),
-            nn.GELU(),
-            nn.Linear(hidden_dim_e * 2, hidden_dim_e),
-            nn.LayerNorm(hidden_dim_e)
-        )
-
-    def forward(self, x, edge_attr):
-        x_embedding = 0
-        for i in range(x.size(1)):
-            x_embedding += self.atom_embeddings[i](x[:, i])
         
-        x_embedding = self.atom_mixer(x_embedding)
-        edge_embedding = 0
-        for i in range(edge_attr.size(1)):
-            edge_embedding += self.edge_embeddings[i](edge_attr[:, i])
-            
-        edge_embedding = self.edge_mixer(edge_embedding)
+    def forward(self, batch):
+        x = sum(emb(batch.x[:, i]) for i, emb in enumerate(self.atom_embeddings))
+        edge_attr = sum(emb(batch.edge_attr[:, i]) for i, emb in enumerate(self.edge_embeddings))
 
-        return x_embedding, edge_embedding
+        return x, edge_attr
+
 
 
 from torch_geometric.nn import GATv2Conv
@@ -138,7 +110,7 @@ class GEncoder(nn.Module):
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
 
-        x, edge_attr = self.input_proj(x, edge_attr)
+        x, edge_attr = self.input_proj(data)
 
         for layer in self.layers:
             x = layer(x, edge_index, edge_attr)
@@ -152,28 +124,6 @@ class GEncoder(nn.Module):
         z_graph_pool = self.projection_head(h_graph)
 
         return z_graph_pool, x_dense, mask
-    
-
-class DualEncoder(nn.Module):
-    def __init__(self, params=params):
-        super(DualEncoder, self).__init__()
-        self.device = params.device
-        self.text_enc = FlagModel(
-                "BAAI/bge-large-en-v1.5", 
-                query_instruction_for_retrieval="Represent this sentence for searching relevant passages:",
-                use_fp16=True, 
-                device=str(params.device))
-        
-        self.graph_enc = GEncoder()
-
-    def forward(self, data, descriptions):
-        text_emb = self.text_enc.encode(descriptions)
-        text_emb = torch.from_numpy(text_emb).float().to(self.device)
-        graph_emb,_,_ = self.graph_enc(data)
-
-        return graph_emb,text_emb
-
-
 
 '''
 import torch
