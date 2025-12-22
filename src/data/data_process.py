@@ -149,14 +149,6 @@ def ohe_edge_features(graph):
 # Dataset that loads preprocessed graphs and text embeddings
 # =========================================================
 class PreprocessedGraphDataset(Dataset):
-    """
-    Dataset that loads pre-saved molecule graphs with optional text embeddings.
-    
-    Args:
-        graph_path: Path to .pkl file containing list of pre-saved graphs
-        emb_dict: Dictionary mapping ID to text embedding tensors (optional)
-        encode_feat: whether to encode the features or not (OHE)
-    """
     def __init__(self, graph_path: str, 
                  emb_dict: Dict[str, torch.Tensor] = None,
                  encode_feat: bool = True):
@@ -173,32 +165,34 @@ class PreprocessedGraphDataset(Dataset):
 
     def __getitem__(self, idx):
         graph = self.graphs[idx]
-        if self.encode_feat : 
-            #graph = ohe_node_features(graph)
-            #graph = ohe_edge_features(graph)
+        
+        if self.encode_feat:
             pass
+            
         if self.emb_dict is not None:
             id_ = graph.id
             text_emb = self.emb_dict[id_]
-            return graph, text_emb
+            selfies = graph.selfies
+            return graph, text_emb, selfies
         else:
-            return graph
+            return graph, graph.selfies
 
 
 def collate_fn(batch):
-    """
-    Collate function for DataLoader to batch graphs with optional text embeddings.
-    
-    Args:
-        batch: List of graph Data objects or (graph, text_embedding) tuples
-        
-    Returns:
-        Batched graph or (batched_graph, stacked_text_embeddings)
-    """
     if isinstance(batch[0], tuple):
-        graphs, text_embs = zip(*batch)
-        batch_graph = Batch.from_data_list(list(graphs))
-        text_embs = torch.stack(text_embs, dim=0)
-        return batch_graph, text_embs
+        if len(batch[0]) == 3:
+            graphs, text_embs, selfies = zip(*batch)
+            batch_graph = Batch.from_data_list(list(graphs))
+            text_embs = torch.stack(text_embs, dim=0)
+            return batch_graph, text_embs, list(selfies)
+        elif len(batch[0]) == 2:
+            graphs, second_element = zip(*batch)
+            batch_graph = Batch.from_data_list(list(graphs))
+            
+            if isinstance(second_element[0], torch.Tensor):
+                text_embs = torch.stack(second_element, dim=0)
+                return batch_graph, text_embs
+            else:
+                return batch_graph, list(second_element)
     else:
         return Batch.from_data_list(batch)

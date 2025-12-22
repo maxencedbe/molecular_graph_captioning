@@ -9,7 +9,7 @@ from transformers import get_linear_schedule_with_warmup , get_constant_schedule
 from src.utils import contrastive_loss, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model_gat import GEncoder
+from src.model.model_gat import GEncoder, MultiViewMolecularModel
 
 epochs = 200
 batch_size = 256
@@ -27,14 +27,15 @@ def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, d
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
     
-    for batch_idx, (batch_graph, batch_text_emb) in enumerate(progress_bar):
+    for batch_idx, (batch_graph, batch_text_emb, batch_selfies) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
         batch_text_emb = batch_text_emb.to(device)
 
         optimizer.zero_grad()
 
-        z_graph, _, _ = model(batch_graph)
-        loss = contrastive_loss_sampling(z_graph, batch_text_emb, batch_idx, train_caption_tensor, batch_size=256)
+        z_graph, z_selfies = model(batch_graph,batch_selfies,device=device)
+        z_final = (z_graph + z_selfies)/2
+        loss = contrastive_loss_sampling(z_final, batch_text_emb, batch_idx, train_caption_tensor, batch_size=256)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -67,13 +68,13 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
     progress_bar = tqdm.tqdm(dataloader, desc="Validation", leave=False)
     
     with torch.no_grad():
-        for batch_graph, batch_text_emb in progress_bar:
+        for batch_idx, (batch_graph, batch_text_emb, batch_selfies) in enumerate(progress_bar):
             batch_graph = batch_graph.to(device)
             batch_text_emb = batch_text_emb.to(device)
 
-            z_graph,_,_ = model(batch_graph)
-
-            loss = contrastive_loss(z_graph, batch_text_emb)
+            z_graph, z_selfies = model(batch_graph,batch_selfies,device=device)
+            z_final = (z_graph + z_selfies)/2
+            loss = contrastive_loss_sampling(z_final, batch_text_emb, batch_idx, val_caption_tensor, batch_size=256)
             total_loss += loss.item() * batch_graph.num_graphs
 
             text_id = retrieve_captioning(z_graph, val_caption_tensor)
@@ -100,8 +101,8 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 
 
 def main():
-    train_data_file = "src/data/train_graphs.pkl"
-    val_data_file = "src/data/validation_graphs.pkl"
+    train_data_file = "src/data/train_graphs_selfies.pkl"
+    val_data_file = "src/data/validation_graphs_selfies.pkl"
     train_emb_csv = "src/data/train_embeddings_bge.csv"
     val_emb_csv   = "src/data/validation_embeddings_bge.csv"
 
@@ -132,9 +133,8 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    model = GEncoder().to(device)
-    #model = GraphT5_GINEncoder().to(device)
-    #optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #model = GEncoder().to(device)
+    model = MultiViewMolecularModel().to(device)
     from muon import MuonClip, MuonConfig
     muon_config = MuonConfig(enable_clipping=False,
                             lr=learning_rate,
