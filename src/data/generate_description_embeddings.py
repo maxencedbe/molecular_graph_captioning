@@ -1,66 +1,70 @@
 #!/usr/bin/env python3
-"""Generate BERT embeddings for molecular descriptions."""
-
 import pickle
 import pandas as pd
 import torch
-from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
+import os 
+import numpy as np
 
 # Configuration
-MAX_TOKEN_LENGTH = 128
+MAX_TOKEN_LENGTH = 512 
+MODEL_NAME = "tencent/KaLM-Embedding-Gemma3-12B-2511"
+LOCAL_CACHE = "./model_cache" # Dossier local pour le modèle
+MRL_DIM = 1024 # Dimension optimale pour le retrieval avec ce modèle
 
-# Load BERT model
-print("Loading BERT model...")
-tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-model = AutoModel.from_pretrained('bert-base-uncased')
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = model.to(device)
-model.eval()
-print(f"Model loaded on: {device}")
+os.makedirs(LOCAL_CACHE, exist_ok=True)
 
-# Process each split
+print(f"Loading KaLM model: {MODEL_NAME}...")
 
+model = SentenceTransformer(
+    MODEL_NAME,
+    trust_remote_code=True,
+    cache_folder=LOCAL_CACHE, # Définit le cache en local
+    model_kwargs={
+        "torch_dtype": torch.bfloat16,
+        "attn_implementation": "flash_attention_2",
+    }
+)
+model.max_seq_length = MAX_TOKEN_LENGTH
 
-# Load graphs from pkl file
-pt_path = f'full_train_fused.pt' 
-print(f"Loading from {pt_path}...")
+try:
+    with open('train_graphs_selfies.pkl', 'rb') as f:
+        graphs = pickle.load(f)
+    print(f"Loaded {len(graphs)} graphs")
+except FileNotFoundError:
+    print("❌ Erreur: 'train_graphs_selfies.pkl' non trouvé.")
+    exit()
 
-# Utilisation de torch.load() à la place de pickle.load()
-# L'argument 'weights_only=False' assure que les objets Data complexes sont chargés correctement.
-graphs = torch.load(pt_path, weights_only=False)
-
-print(f"Loaded {len(graphs)} graphs")
-
-# Generate embeddings
 ids = []
-embeddings = []
+descriptions = [] 
+for graph in graphs:
+    ids.append(getattr(graph, 'id', f'unknownid{len(ids)}')) 
+    descriptions.append(getattr(graph, 'description', '')) 
 
-for graph in tqdm(graphs, total=len(graphs)):
-    # Get description from graph
-    description = graph.description
-    
-    # Tokenize
-    inputs = tokenizer(description, return_tensors='pt', 
-                        truncation=True, max_length=MAX_TOKEN_LENGTH, padding=True)
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    # Get embedding
-    with torch.no_grad():
-        outputs = model(**inputs)
-    embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy().flatten()
-    
-    ids.append(graph.id)
-    embeddings.append(embedding)
+print(f"\nGenerating embeddings (Dim: {MRL_DIM})...")
 
-# Save to CSV
+embeddings_array = model.encode(
+    descriptions, 
+    batch_size=8, # Réduit pour éviter OOM sur 12B
+    show_progress_bar=True,
+    convert_to_numpy=True
+)
+
+# Application du Slicing MRL et Re-normalisation
+# Essentiel pour maintenir la précision du retrieval en dimension réduite
+embeddings_array = embeddings_array[:, :MRL_DIM]
+norms = np.linalg.norm(embeddings_array, axis=1, keepdims=True)
+embeddings_array = np.divide(embeddings_array, norms, out=np.zeros_like(embeddings_array), where=norms!=0)
+
 result = pd.DataFrame({
     'ID': ids,
-    'embedding': [','.join(map(str, emb)) for emb in embeddings]
+    'embedding': [','.join(map(str, emb)) for emb in embeddings_array] 
 })
-output_path = f'data/train_fused_embeddings.csv'
+
+output_path = './train_embeddings_kalm_1024.csv'
 result.to_csv(output_path, index=False)
-print(f"Saved to {output_path}")
 
+print(f"\nSaved {len(embeddings_array)} embeddings to {output_path}")
+print(f"La taille finale de l'embedding est : {embeddings_array.shape[1]}")
 print("\nDone!")
-

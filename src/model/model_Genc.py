@@ -1,22 +1,19 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.nn import global_add_pool
-from torch_geometric.utils import softmax
 from torch_geometric.utils import to_dense_batch
 import torch.nn.functional as F
-
-
 
 class GEncParams:
     node_feat_dim = 177
     edge_feat_dim = 30
 
-    projection_dim = 768
-
+    projection_dim = 3840
+    num_heads = 8
     hidden_dim = 512
-    hiddden_dim_n = 512
+    hidden_dim_n = 512
     hidden_dim_e = 128
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 params = GEncParams()
 
@@ -24,117 +21,106 @@ class MolEncoder(nn.Module):
     def __init__(self, params=params):
         super(MolEncoder, self).__init__()
         
-        hidden_dim_n = params.hiddden_dim_n
+        hidden_dim_n = params.hidden_dim_n
         hidden_dim_e = params.hidden_dim_e
 
-        self.feat_dims = [119, 9, 11, 12, 9, 5, 8, 2, 2] 
-        self.edge_dims = [22,  6, 2] 
-        self.embeddings = nn.ModuleList([
+        self.feat_dims = [119, 10, 11, 12, 9, 5, 8, 2, 2]
+        self.edge_dims = [22, 6, 2]
+
+        self.atom_embeddings = nn.ModuleList([
             nn.Embedding(dim, hidden_dim_n) for dim in self.feat_dims
         ])
 
-        self.embeddings_e = nn.ModuleList([
-            nn.Embedding(dim, hidden_dim_e) for dim in self.feat_dims
+        self.edge_embeddings = nn.ModuleList([
+            nn.Embedding(dim, hidden_dim_e) for dim in self.edge_dims
         ])
-
-    def forward(self, x, edge_attr):
-        x_embedding = 0
-        edge_emb = 0
-        for i in range(x.size(1)):
-            x_embedding += self.embeddings[i](x[:, i])
         
-        for i in range(edge_attr.size(1)):
-            edge_emb += self.embeddings_e[i](edge_attr[:, i])
+    def forward(self, batch):
+        x = sum(emb(batch.x[:, i]) for i, emb in enumerate(self.atom_embeddings))
+        edge_attr = sum(emb(batch.edge_attr[:, i]) for i, emb in enumerate(self.edge_embeddings))
 
+        return x, edge_attr
+
+
+
+from torch_geometric.nn import GATv2Conv
+class GATv2Block(nn.Module):
+    def __init__(self, hidden_dim, edge_dim, heads=4, dropout=0.1):
+        super(GATv2Block, self).__init__()
         
-        return x_embedding, edge_emb
-
-
-
-class MessagePassing(MessagePassing):
-    def __init__(self, in_channels, out_channels, params=params, dropout=0.1):
-        super(MessagePassing, self).__init__(aggr='add', flow='source_to_target')
-
-        mlp_in_dim = in_channels + params.hidden_dim_e 
-
-        self.mlp_message = nn.Sequential(
-            nn.Linear(mlp_in_dim, out_channels),
-            nn.ReLU(),
-            nn.Linear(out_channels, out_channels)
+        self.gat = GATv2Conv(
+            in_channels=hidden_dim,
+            out_channels=hidden_dim // heads, 
+            heads=heads,
+            edge_dim=edge_dim,
+            concat=True,
+            dropout=dropout,
+            add_self_loops=False 
         )
-
-        self.mlp_update = nn.Sequential(
-            nn.Linear(in_channels + out_channels, out_channels),
-            nn.ReLU(),
+        
+        self.norm1 = nn.RMSNorm(hidden_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Dropout(dropout)
         )
+        self.norm2 = nn.RMSNorm(hidden_dim)
 
     def forward(self, x, edge_index, edge_attr):
-        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
 
-    def message(self, x_j, edge_attr):
-        message_input = torch.cat([x_j, edge_attr], dim=-1)
-        return self.mlp_message(message_input)
-
-    def update(self, aggr_out, x):
-        update_input = torch.cat([x, aggr_out], dim=-1)
-        return self.mlp_update(update_input)
-
+        x_attn = self.gat(x, edge_index, edge_attr=edge_attr)
+        x = self.norm1(x + x_attn)
+        x_ffn = self.ffn(x)
+        x = self.norm2(x + x_ffn)
+        
+        return x
 
 
 class GEncoder(nn.Module):
-    def __init__(self, num_layers=3, hidden_dim=params.hidden_dim, params=params, dropout=0.1):
+    def __init__(self, num_layers=5, params=params, dropout=0.1):
         super(GEncoder, self).__init__()
         
-        hidden_dim = params.hidden_dim
-        projection_dim = params.projection_dim 
-
-        self.layers = nn.ModuleList()
-        self.norms = nn.ModuleList()
-        self.ffn = nn.ModuleList()
-        self.dropout_layer = nn.Dropout(dropout)
-
         self.input_proj = MolEncoder(params=params)
-            
-        for i in range(num_layers):
-            self.layers.append(MessagePassing(hidden_dim, hidden_dim, params=params, dropout=dropout))
-            self.norms.append(nn.RMSNorm(hidden_dim))
-            self.ffn.append(nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim)
-            ))
+        
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.layers.append(
+                GATv2Block(
+                    hidden_dim=params.hidden_dim, 
+                    edge_dim=params.hidden_dim_e,
+                    heads=params.num_heads,
+                    dropout=dropout
+                )
+            )
 
-        self.gap_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.att_vec = nn.Linear(hidden_dim, 1)
+        self.gap_proj = nn.Linear(params.hidden_dim, params.hidden_dim)
+        self.att_vec = nn.Linear(params.hidden_dim, 1)
         self.softmax = nn.Softmax(dim=1)
 
         self.projection_head = nn.Sequential(
-            nn.Linear(hidden_dim, projection_dim),
-            nn.RMSNorm(projection_dim),
+            nn.Linear(params.hidden_dim, params.projection_dim),
+            nn.RMSNorm(params.projection_dim),
             nn.ReLU(),
-            self.dropout_layer,
-            nn.Linear(projection_dim, projection_dim)
+            nn.Dropout(dropout),
+            nn.Linear(params.projection_dim, params.projection_dim)
         )
-
 
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
 
-        x, edge_attr = self.input_proj(x, edge_attr)
-        for conv, norm, ffn in zip(self.layers, self.norms, self.ffn):
-            
-            x = conv(x, edge_index, edge_attr)
-            x = norm(x)
-            
-            
+        x, edge_attr = self.input_proj(data)
+
+        for layer in self.layers:
+            x = layer(x, edge_index, edge_attr)
+
         x_dense, mask = to_dense_batch(x, batch)
-        z_graph = self.gap_proj(x_dense) 
-        att = self.att_vec(z_graph)
+        
+        z_graph_gap = self.gap_proj(x_dense) 
+        att = self.att_vec(z_graph_gap).masked_fill(~mask.unsqueeze(-1), float('-inf'))
         alpha = self.softmax(att)
-        
-        h_graph = torch.sum(z_graph * alpha * mask.unsqueeze(-1), dim=1) 
-        
+        h_graph = torch.sum(z_graph_gap * alpha, dim=1) 
         z_graph_pool = self.projection_head(h_graph)
 
-        return z_graph_pool, z_graph, mask
-
+        return z_graph_pool, x_dense, mask
