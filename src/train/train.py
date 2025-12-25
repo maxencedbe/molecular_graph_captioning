@@ -4,9 +4,9 @@ import wandb
 import os
 import torch.optim as optim
 import torch.nn.functional as F
-from transformers import get_linear_schedule_with_warmup , get_constant_schedule_with_warmup 
+from transformers import get_linear_schedule_with_warmup ,get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup 
 
-from src.utils import contrastive_loss, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import contrastive_loss, siglip_loss_sampling, contrastive_loss_softmax_plus_hardneg, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
 from src.model.model_gat import GEncoder
@@ -147,10 +147,11 @@ def main():
     total_steps = len(train_loader) * epochs
     num_warmup_steps = int(0.01 * total_steps) 
     
-    scheduler = get_constant_schedule_with_warmup(
+    scheduler = get_cosine_schedule_with_warmup(
         optimizer, 
         num_warmup_steps=num_warmup_steps, 
-        #num_training_steps=total_steps
+        num_training_steps=total_steps,
+        num_cycles=0.5
     )
     # -------------------------------
 

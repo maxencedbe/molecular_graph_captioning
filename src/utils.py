@@ -52,6 +52,165 @@ def contrastive_loss_sampling(z_graph, z_text, batch_idx, train_caption_tensor, 
     return loss
 
 
+import torch
+import torch.nn.functional as F
+
+def contrastive_loss_softmax_plus_hardneg(z_graph, z_text, batch_idx, train_caption_tensor, 
+                                          batch_size=2048, temp=0.07, 
+                                          start_hard_rank=5, end_hard_rank=64,
+                                          margin=0.2, hard_weight=1.0):
+    
+    z_graph = F.normalize(z_graph, p=2, dim=1)
+    z_text = F.normalize(z_text, p=2, dim=1)
+    
+    device = z_graph.device
+    current_batch_size = z_graph.size(0)
+    total_samples = train_caption_tensor.size(0)
+    
+    all_indices = torch.arange(total_samples, device=device)
+    mask = torch.ones(total_samples, dtype=torch.bool, device=device)
+    mask[batch_idx] = False
+    valid_indices = all_indices[mask]
+    
+    sampled_indices = torch.randint(
+        0, 
+        len(valid_indices), 
+        (current_batch_size, batch_size),
+        device=device
+    )
+    sampled_indices = valid_indices[sampled_indices]
+    
+    z_text_negatives = train_caption_tensor[sampled_indices]
+    z_text_negatives = F.normalize(z_text_negatives, p=2, dim=2)
+    
+    pos_sim = torch.sum(z_graph * z_text, dim=1)
+    
+    neg_sim = torch.bmm(
+        z_graph.unsqueeze(1),  
+        z_text_negatives.transpose(1, 2)  
+    ).squeeze(1)
+
+    logits = torch.cat([pos_sim.unsqueeze(1), neg_sim], dim=1) / temp
+    labels = torch.zeros(current_batch_size, dtype=torch.long, device=device)
+    loss_nce = F.cross_entropy(logits, labels)
+    
+    k_target = min(end_hard_rank, neg_sim.size(1))
+    top_neg_vals, _ = torch.topk(neg_sim, k=k_target, dim=1)
+    
+    if start_hard_rank < k_target:
+        selected_hard_neg = top_neg_vals[:, start_hard_rank:]
+    else:
+        selected_hard_neg = top_neg_vals[:, -1:]
+        
+    loss_hard = F.relu(selected_hard_neg - pos_sim.unsqueeze(1) + margin).mean()
+    
+    total_loss = loss_nce + (hard_weight * loss_hard)
+    
+    return total_loss
+
+
+def siglip_loss_sampling(z_graph, z_text, batch_idx, train_caption_tensor, batch_size=256, temp=10.0, bias=-10.0):
+    z_graph = F.normalize(z_graph, p=2, dim=1)
+    z_text = F.normalize(z_text, p=2, dim=1)
+    
+    device = z_graph.device
+    current_batch_size = z_graph.size(0)
+    total_samples = train_caption_tensor.size(0)
+    
+    all_indices = torch.arange(total_samples, device=device)
+    mask = torch.ones(total_samples, dtype=torch.bool, device=device)
+    mask[batch_idx] = False
+    valid_indices = all_indices[mask]
+    
+    sampled_indices = torch.randint(
+        0, 
+        len(valid_indices), 
+        (current_batch_size, batch_size),
+        device=device
+    )
+    sampled_indices = valid_indices[sampled_indices]
+    
+    z_text_negatives = train_caption_tensor[sampled_indices]
+    z_text_negatives = F.normalize(z_text_negatives, p=2, dim=2)
+    
+    logits_pos = torch.sum(z_graph * z_text, dim=1) 
+    logits_pos = logits_pos * temp + bias
+    
+    logits_neg = torch.bmm(
+        z_graph.unsqueeze(1),  
+        z_text_negatives.transpose(1, 2)  
+    ).squeeze(1)
+    logits_neg = logits_neg * temp + bias
+    
+    loss_pos = -F.logsigmoid(logits_pos).sum()
+    loss_neg = -F.logsigmoid(-logits_neg).sum()
+    
+    loss = (loss_pos + loss_neg) / current_batch_size
+    
+    return loss
+
+
+import torch
+import torch.nn.functional as F
+
+def hybrid_siglip_range_loss(z_graph, z_text, batch_idx, train_caption_tensor, 
+                             batch_size=256, start_hard_rank=5, end_hard_rank=32, 
+                             siglip_temp=10.0, siglip_bias=-10.0, 
+                             margin=0.2, hard_weight=1.0):
+    
+    z_graph = F.normalize(z_graph, p=2, dim=1)
+    z_text = F.normalize(z_text, p=2, dim=1)
+    
+    device = z_graph.device
+    current_batch_size = z_graph.size(0)
+    total_samples = train_caption_tensor.size(0)
+    
+    all_indices = torch.arange(total_samples, device=device)
+    mask = torch.ones(total_samples, dtype=torch.bool, device=device)
+    mask[batch_idx] = False
+    valid_indices = all_indices[mask]
+    
+    sampled_indices = torch.randint(
+        0, 
+        len(valid_indices), 
+        (current_batch_size, batch_size),
+        device=device
+    )
+    sampled_indices = valid_indices[sampled_indices]
+    
+    z_text_negatives = train_caption_tensor[sampled_indices]
+    z_text_negatives = F.normalize(z_text_negatives, p=2, dim=2)
+    
+    sim_pos = torch.sum(z_graph * z_text, dim=1)
+    
+    sim_neg = torch.bmm(
+        z_graph.unsqueeze(1),
+        z_text_negatives.transpose(1, 2)
+    ).squeeze(1)
+    
+    logits_pos = sim_pos * siglip_temp + siglip_bias
+    logits_neg = sim_neg * siglip_temp + siglip_bias
+    
+    loss_pos = -F.logsigmoid(logits_pos).sum()
+    loss_neg = -F.logsigmoid(-logits_neg).sum()
+    l_siglip = (loss_pos + loss_neg) / current_batch_size
+    
+    k_target = min(end_hard_rank, sim_neg.size(1))
+    
+    top_neg_vals, _ = torch.topk(sim_neg, k=k_target, dim=1)
+    
+    if start_hard_rank < k_target:
+        selected_hard_neg = top_neg_vals[:, start_hard_rank:]
+    else:
+        selected_hard_neg = top_neg_vals[:, -1:] 
+    
+    l_hard = F.relu(selected_hard_neg - sim_pos.unsqueeze(1) + margin)
+    l_hard = l_hard.mean()
+    
+    total_loss = l_siglip + (hard_weight * l_hard)
+    
+    return total_loss
+
 def contrastive_loss_bidirectional(z_graph, z_text, temp=0.07):
     """
     Contrastive loss dans les deux sens (graph->text et text->graph)
