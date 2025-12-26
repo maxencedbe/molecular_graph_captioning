@@ -3,7 +3,7 @@ import pandas as pd
 
 from src.utils import retrieve_captioning
 from src.data.data_process import load_data, embdict_to_tensor, load_id2emb, PreprocessedGraphDataset, collate_fn
-from src.model.model_gat import GEncoder
+from src.model.model_gin import GEncoder
 from torch.utils.data import DataLoader
 
 model_path = "src/saved_model/best_model.pth"
