@@ -9,7 +9,7 @@ from transformers import get_linear_schedule_with_warmup ,get_cosine_schedule_wi
 from src.utils import contrastive_loss, siglip_loss_sampling, contrastive_loss_softmax_plus_hardneg, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model_gat import GEncoder
+from src.model.model_gin import GEncoder
 
 epochs = 200
 batch_size = 1024
@@ -17,7 +17,10 @@ learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device(
+    'cuda' if torch.cuda.is_available() else
+    'mps' if torch.backends.mps.is_available() else 
+    'cpu')
 
 
 def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, device, epoch): 
