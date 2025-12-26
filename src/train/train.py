@@ -12,13 +12,12 @@ from torch.utils.data import DataLoader
 from src.model.model_gat import GEncoder
 
 epochs = 200
-batch_size = 256
+batch_size = 1024
 learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 
 
 def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, device, epoch): 
@@ -34,7 +33,7 @@ def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, d
         optimizer.zero_grad()
 
         z_graph, _, _ = model(batch_graph)
-        loss = contrastive_loss_sampling(z_graph, batch_text_emb, batch_idx, train_caption_tensor, batch_size=256)
+        loss = contrastive_loss_sampling(z_graph, batch_text_emb, batch_idx, train_caption_tensor, batch_size=batch_size)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -100,8 +99,15 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 
 
 def main():
-    train_data_file = "src/data/train_graphs.pkl"
-    val_data_file = "src/data/validation_graphs.pkl"
+    # train_data_file = "src/data/train_graphs.pkl"
+    # val_data_file = "src/data/validation_graphs.pkl"
+
+    train_data_file = "src/data/train_graphs_smiles.pkl"
+    val_data_file = "src/data/validation_graphs_smiles.pkl"
+
+    # train_data_file = "src/data/train_graphs_selfies.pkl"
+    # val_data_file = "src/data/validation_graphs_selfies.pkl"
+
     train_emb_csv = "src/data/train_embeddings_bge.csv"
     val_emb_csv   = "src/data/validation_embeddings_bge.csv"
 
@@ -142,7 +148,7 @@ def main():
                             log_max_logits=False,
                             log_dir='')
     
-    optimizer = MuonClip(model,{}, muon_config)
+    optimizer = MuonClip(model, {}, muon_config)
 
     total_steps = len(train_loader) * epochs
     num_warmup_steps = int(0.01 * total_steps) 

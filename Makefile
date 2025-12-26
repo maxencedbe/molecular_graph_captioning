@@ -48,6 +48,11 @@ infer:
 	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
 	@echo "Inference complete."
 
+add_smiles:
+	@echo "Adding smiles to data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/add_smiles.py
+	@echo "Inference complete."
+
 add_selfies:
 	@echo "Adding selfies to data..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/add_selfies.py
