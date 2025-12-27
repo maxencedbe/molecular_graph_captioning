@@ -11,3 +11,4 @@ saved_model/
 src/data/checkpoint-8000/
 /runs/
 /train_bge/
+/cache_model/

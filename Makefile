@@ -63,7 +63,12 @@ evaluate_train:
 	@PYTHONPATH=. $(PYTHON_EXEC) src/evaluate_train.py
 	@echo "Evaluation complete."
 
-top_k:
-	@echo "Generating top k hard negatives..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/data/tryhard2.py
-	@echo "Inference complete."
+generate_captions:
+	@echo "Evaluating on train data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/generate_captions.py
+	@echo "Evaluation complete."
+
+rloo:
+	@echo "Evaluating on train data..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/rloo_t5.py
+	@echo "Evaluation complete."
