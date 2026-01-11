@@ -2,11 +2,10 @@ import torch
 import tqdm
 import wandb
 import os
-import torch.optim as optim
 import torch.nn.functional as F
-from transformers import get_linear_schedule_with_warmup ,get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup 
+from transformers import get_cosine_schedule_with_warmup 
 
-from src.utils import contrastive_loss, siglip_loss_sampling, contrastive_loss_softmax_plus_hardneg, contrastive_loss_sampling, MolecularCaptionEvaluator, retrieve_captioning 
+from src.utils import MolecularCaptionEvaluator, retrieve_captioning, compute_kl_losses, compute_triplet_loss 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
 from src.model.model_gin import GEncoder
@@ -17,15 +16,19 @@ learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
 save_freq = 10
+FIXED_TEMP = 1/0.07
+TRIPLET_MARGIN = 0.2
+
 device = torch.device(
     'cuda' if torch.cuda.is_available() else
     'mps' if torch.backends.mps.is_available() else 
     'cpu')
 
-
 def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, device, epoch): 
     model.train()
     total_loss = 0
+    total_triplet = 0
+    total_kl = 0
     num_samples_processed = 0
     progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
     
@@ -36,22 +39,33 @@ def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, d
         optimizer.zero_grad()
 
         z_graph, _, _ = model(batch_graph)
-        loss = contrastive_loss_sampling(z_graph, batch_text_emb, batch_idx, train_caption_tensor, batch_size=batch_size)
+        
+        loss_triplet = compute_triplet_loss(z_graph, batch_text_emb, margin=TRIPLET_MARGIN)
+
+        loss_u2u, loss_u2c = compute_kl_losses(z_graph, batch_text_emb, FIXED_TEMP)
+        
+        loss = loss_triplet + loss_u2u + loss_u2c
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         scheduler.step()
         
-        batch_loss = loss.item() * batch_graph.num_graphs
+        bs = batch_graph.num_graphs
+        batch_loss = loss.item() * bs
         total_loss += batch_loss
-        num_samples_processed += batch_graph.num_graphs
+        total_triplet += loss_triplet.item() * bs
+        total_kl += (loss_u2u.item() + loss_u2c.item()) * bs
+        num_samples_processed += bs
         
         running_loss = total_loss / num_samples_processed
         progress_bar.set_postfix(loss=f'{running_loss:.4f}')
         
         wandb.log({
             "train/batch_loss": loss.item(),
+            "train/loss_triplet": loss_triplet.item(),
+            "train/loss_u2u": loss_u2u.item(),
+            "train/loss_u2c": loss_u2c.item(),
             "train/learning_rate": scheduler.get_last_lr()[0], 
             "train/step": epoch * len(dataloader) + batch_idx
         })
@@ -75,7 +89,7 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 
             z_graph,_,_ = model(batch_graph)
 
-            loss = contrastive_loss(z_graph, batch_text_emb)
+            loss = compute_triplet_loss(z_graph, batch_text_emb, margin=TRIPLET_MARGIN)
             total_loss += loss.item() * batch_graph.num_graphs
 
             text_id = retrieve_captioning(z_graph, val_caption_tensor)
@@ -102,15 +116,8 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 
 
 def main():
-    # train_data_file = "src/data/train_graphs.pkl"
-    # val_data_file = "src/data/validation_graphs.pkl"
-
-    train_data_file = "src/data/train_graphs_smiles.pkl"
-    val_data_file = "src/data/validation_graphs_smiles.pkl"
-
-    # train_data_file = "src/data/train_graphs_selfies.pkl"
-    # val_data_file = "src/data/validation_graphs_selfies.pkl"
-
+    train_data_file = "src/data/train_graphs.pkl"
+    val_data_file = "src/data/validation_graphs.pkl"
     train_emb_csv = "src/data/train_embeddings_bge.csv"
     val_emb_csv   = "src/data/validation_embeddings_bge.csv"
 
@@ -122,6 +129,8 @@ def main():
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "architecture": "GEncoder",
+            "loss": "Triplet (Hard Mining) + KL (U2U, U2C)",
+            "triplet_margin": TRIPLET_MARGIN,
             "device": str(device)
         }
     )
@@ -142,8 +151,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     model = GEncoder().to(device)
-    #model = GraphT5_GINEncoder().to(device)
-    #optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    
     from muon import MuonClip, MuonConfig
     muon_config = MuonConfig(enable_clipping=False,
                             lr=learning_rate,
@@ -162,7 +170,6 @@ def main():
         num_training_steps=total_steps,
         num_cycles=0.5
     )
-    # -------------------------------
 
     evaluator = MolecularCaptionEvaluator(device=device)
 

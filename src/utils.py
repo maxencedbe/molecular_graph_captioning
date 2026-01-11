@@ -150,6 +150,42 @@ def siglip_loss_sampling(z_graph, z_text, batch_idx, train_caption_tensor, batch
     return loss
 
 
+def compute_kl_losses(z_graph, z_text_batch, temp):
+    z_graph_norm = F.normalize(z_graph, p=2, dim=1)
+    z_text_norm = F.normalize(z_text_batch, p=2, dim=1)
+    
+    sim_tt = torch.matmul(z_text_norm, z_text_norm.T) * temp
+    target_dist = F.softmax(sim_tt, dim=1) 
+    
+    sim_mm = torch.matmul(z_graph_norm, z_graph_norm.T) * temp
+    log_prob_mm = F.log_softmax(sim_mm, dim=1) 
+    
+    sim_mt = torch.matmul(z_graph_norm, z_text_norm.T) * temp
+    log_prob_mt = F.log_softmax(sim_mt, dim=1) 
+    
+    loss_u2u = F.kl_div(log_prob_mm, target_dist, reduction='batchmean')
+    loss_u2c = F.kl_div(log_prob_mt, target_dist, reduction='batchmean')
+    
+    return loss_u2u, loss_u2c
+
+def compute_triplet_loss(z_graph, z_text, margin=0.2):
+    z_graph_norm = F.normalize(z_graph, p=2, dim=1)
+    z_text_norm = F.normalize(z_text, p=2, dim=1)
+
+    scores = torch.matmul(z_graph_norm, z_text_norm.T)
+    
+    pos_scores = torch.diag(scores)
+    
+    mask = torch.eye(z_graph.size(0), device=z_graph.device).bool()
+    scores_masked = scores.clone()
+    scores_masked.masked_fill_(mask, -float('inf'))
+    
+    neg_scores = scores_masked.max(dim=1)[0]
+    
+    loss = torch.clamp(neg_scores - pos_scores + margin, min=0).mean()
+    return loss
+
+
 import torch
 import torch.nn.functional as F
 
