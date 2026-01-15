@@ -21,54 +21,19 @@ env:
 	@echo "Setting up eval environment..."
 	@uv venv $(VENV) --python $(PYTHON_VERSION) --no-project
 	@uv pip install -r requirements.txt --python $(UV_PYTHON_EXEC)
-	@echo "Evaluation environment ready."
+	@echo "Virtual environment ready."
 
-test_data:
-	@echo "Processing data..."
-	@$(PYTHON_EXEC) src/test_data.py
-	@echo "Data processing complete."
-
-test_model:
-	@echo "Testing model..."
-	@$(PYTHON_EXEC) src/test_model.py
-	@echo "Model testing complete."
+generate_embeddings:
+	@echo "Generating embeddings..."
+	@PYTHONPATH=. $(PYTHON_EXEC) src/data/generate_description_embeddings.py
+	@echo "Embeddings generation complete."
 
 train:
 	@echo "Training model..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train.py
 	@echo "Model training complete."
 
-train_dual:
-	@echo "Training model..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/train/train_dual.py
-	@echo "Model training complete."
-
 infer:
 	@echo "Running inference..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/inference/inference.py
 	@echo "Inference complete."
-
-add_smiles:
-	@echo "Adding smiles to data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/add_smiles.py
-	@echo "Inference complete."
-
-add_selfies:
-	@echo "Adding selfies to data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/add_selfies.py
-	@echo "Inference complete."
-
-evaluate_train:
-	@echo "Evaluating on train data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/evaluate_train.py
-	@echo "Evaluation complete."
-
-generate_captions:
-	@echo "Evaluating on train data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/generate_captions.py
-	@echo "Evaluation complete."
-
-rloo:
-	@echo "Evaluating on train data..."
-	@PYTHONPATH=. $(PYTHON_EXEC) src/rloo_t5.py
-	@echo "Evaluation complete."

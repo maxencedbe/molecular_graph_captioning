@@ -15,14 +15,14 @@ model = T5ForConditionalGeneration.from_pretrained(
     cache_dir=custom_cache_dir
 )
 
-val_data_file = "src/data/validation_graphs_smiles.pkl"
+val_data_file = "src/data/validation_graphs.pkl"
 val_data = load_data(val_data_file)
 evaluator = MolecularCaptionEvaluator()
 
 mean = 0.0
 
 for i,data in enumerate(val_data):
-    input_text = f"Caption the following SMILES: {data.smiles}"
+    input_text = f"Caption the following : {data.description}"
     inputs = tokenizer(input_text, return_tensors="pt")
     
     outputs = model.generate(

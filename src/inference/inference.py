@@ -3,11 +3,11 @@ import pandas as pd
 
 from src.utils import retrieve_captioning
 from src.data.data_process import load_data, embdict_to_tensor, load_id2emb, PreprocessedGraphDataset, collate_fn
-from src.model.model_gin import GEncoder
+from src.model.model import GEncoder
 from torch.utils.data import DataLoader
 
 model_path = "src/saved_model/best_model.pth"
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else  'mps' if torch.backends.mps.is_available() else 'cpu')
 model = GEncoder().to(device)
 
 model.load_state_dict(torch.load(model_path, map_location=device))
@@ -22,7 +22,7 @@ def main():
     all_pred_captions = []
 
     train_data_file = "src/data/train_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings_bge.csv"
+    train_emb_csv = "src/data/train_embeddings.csv"
 
     train_emb = load_id2emb(train_emb_csv)
     train_data = load_data(train_data_file)
