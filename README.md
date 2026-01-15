@@ -4,7 +4,7 @@ This project implements a deep learning model for generating captions from molec
 
 ## Prerequisites
 
-Before starting, ensure that the following data files are placed in the `src/data` directory:
+After cloning the repository, ensure that the following data files are placed in the `src/data` directory:
 
 - `test_graphs.pkl`
 - `train_graphs.pkl`
@@ -28,7 +28,7 @@ source .venv/bin/activate
 
 Follow the steps below to run the pipeline in order:
 
-### 1. Generate Embeddings
+### 1. Generate embeddings
 
 Generate the necessary embeddings for training:
 
@@ -36,7 +36,7 @@ Generate the necessary embeddings for training:
 make embeddings
 ```
 
-### 2. Train the Model
+### 2. Train the model
 
 Train the model using the default configuration:
 
