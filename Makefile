@@ -11,7 +11,7 @@ else
     UV_PYTHON_EXEC := $(VENV)/bin/python
 endif
 
-.PHONY: env data_process test_model train infer
+.PHONY: env embeddings train infer
 
 env:
 	@command -v uv >/dev/null 2>&1 || { \
@@ -23,7 +23,7 @@ env:
 	@uv pip install -r requirements.txt --python $(UV_PYTHON_EXEC)
 	@echo "Virtual environment ready."
 
-generate_embeddings:
+embeddings:
 	@echo "Generating embeddings..."
 	@PYTHONPATH=. $(PYTHON_EXEC) src/data/generate_description_embeddings.py
 	@echo "Embeddings generation complete."
