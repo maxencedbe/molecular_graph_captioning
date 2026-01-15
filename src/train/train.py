@@ -10,7 +10,7 @@ from src.data.data_process import load_data, PreprocessedGraphDataset, collate_f
 from torch.utils.data import DataLoader
 from src.model.model import GEncoder
 
-epochs = 10
+epochs = 100
 batch_size = 128
 learning_rate = 5e-4
 weight_decay = 1e-5
@@ -200,6 +200,10 @@ def main():
             
             if score > best_score:
                 best_score = score
+                save_path = "src/saved_model"
+                if not os.path.exists(save_path):
+                    os.makedirs(save_path)
+                    print(f"Directory {save_path} created.")
                 torch.save(model.state_dict(), "src/saved_model/best_model.pth")
                 wandb.save("src/saved_model/best_model.pth")
                 wandb.run.summary["best_score"] = best_score
