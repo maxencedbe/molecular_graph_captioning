@@ -8,10 +8,10 @@ from transformers import get_cosine_schedule_with_warmup
 from src.utils import MolecularCaptionEvaluator, retrieve_captioning, compute_kl_losses, compute_triplet_loss 
 from src.data.data_process import load_data, PreprocessedGraphDataset, collate_fn, load_id2emb, embdict_to_tensor
 from torch.utils.data import DataLoader
-from src.model.model_gin import GEncoder
+from src.model.model import GEncoder
 
-epochs = 200
-batch_size = 1024
+epochs = 100
+batch_size = 128
 learning_rate = 5e-4
 weight_decay = 1e-5
 val_freq = 5
@@ -19,10 +19,7 @@ save_freq = 10
 FIXED_TEMP = 1/0.07
 TRIPLET_MARGIN = 0.2
 
-device = torch.device(
-    'cuda' if torch.cuda.is_available() else
-    'mps' if torch.backends.mps.is_available() else 
-    'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
 def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, device, epoch): 
     model.train()
@@ -30,7 +27,7 @@ def train_epoch(model, dataloader, train_caption_tensor, optimizer, scheduler, d
     total_triplet = 0
     total_kl = 0
     num_samples_processed = 0
-    progress_bar = tqdm.tqdm(dataloader, desc="Training Epoch", leave=False)
+    progress_bar = tqdm.tqdm(dataloader, desc="Training epoch", leave=False)
     
     for batch_idx, (batch_graph, batch_text_emb) in enumerate(progress_bar):
         batch_graph = batch_graph.to(device)
@@ -118,8 +115,8 @@ def validate_epoch(model, dataloader, val_caption_tensor, val_data_list, evaluat
 def main():
     train_data_file = "src/data/train_graphs.pkl"
     val_data_file = "src/data/validation_graphs.pkl"
-    train_emb_csv = "src/data/train_embeddings_bge.csv"
-    val_emb_csv   = "src/data/validation_embeddings_bge.csv"
+    train_emb_csv = "src/data/train_embeddings.csv"
+    val_emb_csv   = "src/data/validation_embeddings.csv"
 
     wandb.init(
         project="molecular-captioning",
@@ -203,13 +200,17 @@ def main():
             
             if score > best_score:
                 best_score = score
+                save_path = "src/saved_model"
+                if not os.path.exists(save_path):
+                    os.makedirs(save_path)
+                    print(f"Directory {save_path} created.")
                 torch.save(model.state_dict(), "src/saved_model/best_model.pth")
                 wandb.save("src/saved_model/best_model.pth")
                 wandb.run.summary["best_score"] = best_score
             
-            print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Score: {score:.4f}")
+            print(f"Epoch {epoch+1}/{epochs}, Train loss: {train_loss:.4f}, Val loss: {val_loss:.4f}, Score: {score:.4f}")
         else:
-            print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}")
+            print(f"Epoch {epoch+1}/{epochs}, Train loss: {train_loss:.4f}")
             
         if (epoch+1) % save_freq == 0:
             checkpoint_path = f"src/saved_model/model_epoch_{epoch}.pth"

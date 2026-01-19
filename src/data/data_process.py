@@ -5,14 +5,12 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch
 
+
 def load_data(file_path: str) -> List[Batch]:
     with open(file_path, 'rb') as f:
         graphs = pickle.load(f)
     return graphs
 
-# =========================================================
-# Feature maps for atom and bond attributes
-# =========================================================
 
 x_map: Dict[str, List[Any]] = {
     'atomic_num': list(range(0, 119)),
@@ -46,20 +44,7 @@ e_map: Dict[str, List[Any]] = {
 }
 
 
-# =========================================================
-# Load precomputed text embeddings
-# =========================================================
 def load_id2emb(csv_path: str) -> Dict[str, torch.Tensor]:
-    """
-    Load precomputed text embeddings from CSV file.
-    
-    Args:
-        csv_path: Path to CSV file with columns: ID, embedding
-                  where embedding is comma-separated floats
-        
-    Returns:
-        Dictionary mapping ID (str) to embedding tensor
-    """
     df = pd.read_csv(csv_path)
     id2emb = {}
     for _, row in df.iterrows():
@@ -70,19 +55,7 @@ def load_id2emb(csv_path: str) -> Dict[str, torch.Tensor]:
     return id2emb
 
 
-# =========================================================
-# Load descriptions from preprocessed graphs
-# =========================================================
 def load_descriptions_from_graphs(graph_path: str) -> Dict[str, str]:
-    """
-    Load ID to description mapping from preprocessed graph file.
-    
-    Args:
-        graph_path: Path to .pkl file containing list of pre-saved graphs
-        
-    Returns:
-        Dictionary mapping ID (str) to description (str)
-    """
     with open(graph_path, 'rb') as f:
         graphs = pickle.load(f)
     
@@ -92,21 +65,12 @@ def load_descriptions_from_graphs(graph_path: str) -> Dict[str, str]:
     
     return id2desc
 
+
 def embdict_to_tensor(emb_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
-    """
-    Convert a dictionary of embeddings to a stacked tensor.
-    Args:
-        emb_dict: Dictionary mapping ID (str) to embedding tensor
-        id_list: List of IDs (str) to retrieve embeddings for
-        
-    Returns:
-        Stacked tensor of embeddings corresponding to the IDs in id_list
-    """
     emb_list = [emb_dict[id_] for id_ in emb_dict.keys()]
     return torch.stack(emb_list, dim=0)
-# =========================================================
-# One hot encode the features
-# =========================================================
+
+
 def ohe_node_features(graph):
     n_node = graph.x.size(0)
     total_feat = sum([len(l) for l in x_map.values()])
@@ -125,6 +89,7 @@ def ohe_node_features(graph):
     final_x = final_x.float()
     graph.x = final_x
     return graph
+
 
 def ohe_edge_features(graph):
     n_edge = graph.edge_attr.size(0)
@@ -145,18 +110,8 @@ def ohe_edge_features(graph):
     graph.edge_attr = final_attr
     return graph
 
-# =========================================================
-# Dataset that loads preprocessed graphs and text embeddings
-# =========================================================
+
 class PreprocessedGraphDataset(Dataset):
-    """
-    Dataset that loads pre-saved molecule graphs with optional text embeddings.
-    
-    Args:
-        graph_path: Path to .pkl file containing list of pre-saved graphs
-        emb_dict: Dictionary mapping ID to text embedding tensors (optional)
-        encode_feat: whether to encode the features or not (OHE)
-    """
     def __init__(self, graph_path: str, 
                  emb_dict: Dict[str, torch.Tensor] = None,
                  encode_feat: bool = True):
@@ -174,8 +129,6 @@ class PreprocessedGraphDataset(Dataset):
     def __getitem__(self, idx):
         graph = self.graphs[idx]
         if self.encode_feat : 
-            #graph = ohe_node_features(graph)
-            #graph = ohe_edge_features(graph)
             pass
         if self.emb_dict is not None:
             id_ = graph.id
@@ -186,15 +139,6 @@ class PreprocessedGraphDataset(Dataset):
 
 
 def collate_fn(batch):
-    """
-    Collate function for DataLoader to batch graphs with optional text embeddings.
-    
-    Args:
-        batch: List of graph Data objects or (graph, text_embedding) tuples
-        
-    Returns:
-        Batched graph or (batched_graph, stacked_text_embeddings)
-    """
     if isinstance(batch[0], tuple):
         graphs, text_embs = zip(*batch)
         batch_graph = Batch.from_data_list(list(graphs))
